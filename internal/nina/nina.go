@@ -72,7 +72,8 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	}
 	n.Engine = dialog.New(dialog.Config{FollowUp: cfg.Dialog.FollowUp, AwakeFor: cfg.Dialog.AwakeFor,
 		ReplyTimeout: 10 * time.Second, Knob: knob, NoteGap: cfg.Dialog.NoteGap,
-		Silent: !cfg.Prefs.Voice, StartAsleep: cfg.Dialog.StartAsleep}, n.Ears, n.Mind, spk, nil, log.Ev)
+		Silent: !cfg.Prefs.Voice, StartAsleep: cfg.Dialog.StartAsleep,
+		Outlast: cfg.Audio.Hang + 600*time.Millisecond}, n.Ears, n.Mind, spk, nil, log.Ev)
 	if t := localVoice(cfg.Prefs); t != nil {
 		n.Engine.SetLocal(t)
 	}

@@ -285,3 +285,35 @@ func TestNotesTogether(t *testing.T) {
 		t.Fatalf("%q", r.mind.turns)
 	}
 }
+
+// the person answers while her question is still playing: one utterance, her voice then theirs
+func TestAnswerOverHerTail(t *testing.T) {
+	r := newRig(t, Config{Outlast: 50 * time.Millisecond})
+	r.utter("Nina, what is the status of my home ventilation?")
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindSaid, Text: "Are you thinking about the lab or the bedroom?"})
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindAudio, PCM: make([]byte, 4800)})
+	r.e.onVad(audio.Event{Kind: audio.Start}) // in her voice: tentative
+	seq := r.e.seq
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindDone})
+	r.e.onSpkDone(true)
+	time.Sleep(80 * time.Millisecond) // the person goes on after her
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: seq, Text: "the bedroom? In the lab.", Final: true})
+	if len(r.mind.turns) != 2 || r.mind.turns[1] != "in the lab" {
+		t.Fatalf("the answer was lost: %q", r.mind.turns)
+	}
+}
+
+func TestAfterEcho(t *testing.T) {
+	said := "Are you thinking about the lab or the bedroom?"
+	for h, want := range map[string]string{
+		"the bedroom? In the lab.":     "in the lab",
+		"In the lab.":                  "in the lab",
+		"about the lab or the bedroom": "",
+		"the lab":                      "",
+	} {
+		if got := AfterEcho(h, said); got != want {
+			t.Errorf("AfterEcho(%q) = %q, want %q", h, got, want)
+		}
+	}
+}

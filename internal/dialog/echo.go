@@ -109,3 +109,23 @@ func HeardPart(said string, frac float64) string {
 	}
 	return strings.Join(w[:n], " ") + " …"
 }
+
+// AfterEcho is what the person said at the end of an utterance that began in her voice: the
+// longest run of its first words found, in order, in what she said (her echo; a typo's
+// tolerance) is dropped. "the bedroom? In the lab." after "…the lab or the bedroom?" is "in the
+// lab"; "In the lab." keeps all of it (no run of two of her words begins it).
+func AfterEcho(heard, said string) string {
+	hw, sw := words(heard), words(said)
+	best := 0
+	for i := range sw {
+		k := 0
+		for k < len(hw) && i+k < len(sw) && (hw[k] == sw[i+k] || editAtMost1(hw[k], sw[i+k])) {
+			k++
+		}
+		best = max(best, k)
+	}
+	if best < 2 && best < len(hw) {
+		best = 0 // one shared word is not her voice
+	}
+	return strings.Join(hw[best:], " ")
+}

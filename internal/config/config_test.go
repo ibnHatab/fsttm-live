@@ -14,7 +14,7 @@ func TestLoadSavePrefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Dialog.AwakeFor != 90*time.Second || !c.Prefs.Mic || c.Prefs.Narration != "important" {
+	if c.Dialog.AwakeFor != 2*time.Minute || !c.Prefs.Mic || c.Prefs.Narration != "important" {
 		t.Fatalf("defaults: %+v %+v", c.Dialog, c.Prefs)
 	}
 	var web struct{ Addr string }

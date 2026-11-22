@@ -89,6 +89,9 @@ type Config struct {
 	LocalVoice   bool          // speak the mind's transcript with TTS, not its audio
 	Silent       bool          // her sound off: replies are shown, not played
 	StartAsleep  bool
+	// Outlast: an utterance that began in her voice and ended this long after her reply did is
+	// the person's (they answered over her tail): its words after her echo are a turn.
+	Outlast time.Duration
 }
 
 type Engine struct {
@@ -115,6 +118,7 @@ type Engine struct {
 	seq     int
 	open    bool
 	uttT    time.Time
+	outlast map[int]bool // tentative utterances that went on after her reply ended
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
@@ -156,6 +160,7 @@ func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string
 		Ctl:     make(chan func(*Engine), 16),
 		tent:    map[int]bool{},
 		echoOf:  map[int]string{},
+		outlast: map[int]bool{},
 		freeT:   time.Now(),
 	}
 	e.Attn.AwakeFor = cfg.AwakeFor
@@ -240,6 +245,10 @@ func (e *Engine) onVad(ev audio.Event) {
 		}
 		e.ears.End()
 		e.open, e.uttEnd = false, time.Now()
+		if e.tent[e.seq] && !e.replying && e.cfg.Outlast > 0 && e.lastSpoke.After(e.uttT) &&
+			time.Since(e.lastSpoke) >= e.cfg.Outlast {
+			e.outlast[e.seq] = true
+		}
 		if !e.tent[e.seq] {
 			_ = e.Turn.UserAction('R')
 		}
@@ -274,11 +283,19 @@ func (e *Engine) onHeard(h live.Heard) {
 		e.checkBarge(h.Seq, h.Text)
 		if e.tent[h.Seq] {
 			delete(e.tent, h.Seq)
+			out := e.outlast[h.Seq]
+			delete(e.outlast, h.Seq)
+			if rest := AfterEcho(h.Text, e.said.String()+" "+e.prevSaid); out && rest != "" {
+				e.Log("outlasted", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": rest})
+				e.dispatch(rest, false)
+				return
+			}
 			e.Log("echo", map[string]any{"seq": h.Seq, "text": h.Text})
 			return
 		}
 	}
 	delete(e.tent, h.Seq)
+	delete(e.outlast, h.Seq)
 	text := h.Text
 	if said, ok := e.echoOf[h.Seq]; ok {
 		// a barge-in over her voice (or an utterance she spoke into): only the words she was
