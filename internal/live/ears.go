@@ -30,6 +30,8 @@ type Heard struct {
 	Text  string
 	Final bool
 	Late  bool
+	// Interim, on the final: the last interim text, when the final differs (the log's)
+	Interim string
 }
 
 // Ears is gemini-3.5-transcribe-live in manual activity: we send activityStart, the
@@ -189,7 +191,18 @@ func (e *Ears) loop(ctx context.Context) {
 	}
 	emitFinal := func() {
 		final, finalSent = seg(), true
-		e.Out <- Heard{Seq: seq, Text: final, Final: true}
+		h := Heard{Seq: seq, Text: final, Final: true}
+		if final != lastSeg {
+			h.Interim = lastSeg
+		}
+		if final == "" && lastSeg != "" {
+			// the transcriber took back what it had written (its accumulated text shrank or was
+			// rewritten): what it heard while the person spoke stands
+			final = lastSeg
+			h.Text = final
+			e.Log("final_from_interim", map[string]any{"seq": seq, "text": final})
+		}
+		e.Out <- h
 	}
 	for {
 		select {

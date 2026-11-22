@@ -282,7 +282,7 @@ func (e *Engine) onHeard(h live.Heard) {
 		since = time.Since(e.uttEnd)
 	}
 	e.Log("heard", map[string]any{"seq": h.Seq, "text": h.Text, "late": h.Late, "after_end_ms": since.Milliseconds(),
-		"tentative": e.tent[h.Seq]})
+		"tentative": e.tent[h.Seq], "interim": h.Interim})
 	if h.Late {
 		return // the turn was taken (or dropped) on the final; logged for the measurements
 	}
@@ -434,8 +434,8 @@ func (e *Engine) dispatch(text string, typed bool) {
 	} else {
 		e.Attn.OnUtterance(text)
 	}
-	e.awakeChanged()
-	e.send(text)
+	e.send(text)     // first: a sleep phrase's goodbye is a reply, and her session stays for it
+	e.awakeChanged() // closed after the goodbye has played (finishReply)
 }
 
 // send gives the floor to SYSTEM and the turn to the mind.
