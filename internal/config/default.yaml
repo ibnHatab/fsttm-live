@@ -24,6 +24,11 @@ dialog:
   awake_for: 90s                         # asleep (and her session closed) after this long without a turn
   start_asleep: true
   note_gap: 2s                           # a NOTE waits for the floor to be free this long
+  wake:                                  # who hears her name
+    mode: shadow                         # cloud: the transcriber; shadow: and the local spotter, logged; local: asleep, only what the spotter woke goes to the cloud
+    model: ~/models/sherpa-kws/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01
+    keywords: ~/repo/fsttm-live/testdata/kws-keywords.txt
+    threshold: 0.25                      # lower hears more
 
 # SOURCES: the systems Nina draws on. Metis (metis-home): its tools, and its REASONING through the
 # stream door (opened here). A line's kind gives its level: context (she knows it, says nothing),

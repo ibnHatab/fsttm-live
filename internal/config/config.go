@@ -44,6 +44,12 @@ type Config struct {
 		AwakeFor    time.Duration `yaml:"awake_for"`
 		StartAsleep bool          `yaml:"start_asleep"`
 		NoteGap     time.Duration `yaml:"note_gap"`
+		Wake        struct {
+			Mode      string  `yaml:"mode"` // cloud | shadow | local
+			Model     string  `yaml:"model"`
+			Keywords  string  `yaml:"keywords"`
+			Threshold float32 `yaml:"threshold"`
+		} `yaml:"wake"`
 	} `yaml:"dialog"`
 	Prefs   Prefs                `yaml:"prefs"`
 	Plugins map[string]yaml.Node `yaml:"plugins"`

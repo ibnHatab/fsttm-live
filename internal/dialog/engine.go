@@ -92,6 +92,19 @@ type Config struct {
 	// Outlast: an utterance that began in her voice and ended this long after her reply did is
 	// the person's (they answered over her tail): its words after her echo are a turn.
 	Outlast time.Duration
+	// Wake: who hears her name. "" or "cloud": the transcriber, every utterance streamed;
+	// "shadow": the transcriber, and the local spotter alongside (its hits logged: a test);
+	// "local": asleep, an utterance reaches the transcriber only once the spotter heard her
+	// name in it (the room's talk stays on the machine).
+	Wake    string
+	Spotter Spotter
+}
+
+// Spotter is the local wake word (kws): an utterance's audio in, a keyword's label out.
+type Spotter interface {
+	Begin()
+	Feed(pcm []byte) string
+	End() string
 }
 
 type Engine struct {
@@ -119,6 +132,9 @@ type Engine struct {
 	open    bool
 	uttT    time.Time
 	outlast map[int]bool // tentative utterances that went on after her reply ended
+	kwsHit  string       // the spotter's keyword in the open utterance
+	holding bool         // asleep, local wake: the open utterance's audio is held, not sent
+	held    [][]byte
 	voiced  map[int]time.Duration
 	pitched map[int]time.Duration
 	uttEnd  time.Time
@@ -236,18 +252,53 @@ func (e *Engine) onVad(ev audio.Event) {
 		} else {
 			_ = e.Turn.UserAction('G')
 		}
-		e.ears.Begin(e.seq)
-		e.ears.Audio(ev.PCM)
+		e.kwsHit, e.holding, e.held = "", false, nil
+		if k := e.cfg.Spotter; k != nil {
+			k.Begin()
+			e.spotted(k.Feed(ev.PCM))
+		}
+		if e.cfg.Wake == "local" && e.cfg.Spotter != nil && !e.Attn.Awake() && e.kwsHit == "" {
+			e.holding, e.held = true, [][]byte{ev.PCM}
+		} else {
+			e.ears.Begin(e.seq)
+			e.ears.Audio(ev.PCM)
+		}
 		e.Log("vad_start", map[string]any{"seq": e.seq, "tentative": e.tent[e.seq], "floor": string(e.Turn.State), "ref": ev.Ref})
 	case audio.Audio:
-		if e.open {
+		if !e.open {
+			return
+		}
+		if k := e.cfg.Spotter; k != nil && e.kwsHit == "" {
+			e.spotted(k.Feed(ev.PCM))
+		}
+		if e.holding {
+			e.held = append(e.held, ev.PCM)
+			if e.kwsHit != "" {
+				e.release()
+			}
+		} else {
 			e.ears.Audio(ev.PCM)
 		}
 	case audio.End:
 		if !e.open {
 			return
 		}
-		e.ears.End()
+		if k := e.cfg.Spotter; k != nil {
+			if hit := k.End(); e.kwsHit == "" {
+				e.spotted(hit)
+			}
+		}
+		switch {
+		case e.holding && e.kwsHit != "":
+			e.release()
+			e.ears.End()
+		case e.holding:
+			// asleep and no name heard: nothing of it leaves the machine
+			e.holding, e.held = false, nil
+			e.Log("asleep_local", map[string]any{"seq": e.seq, "voiced_s": ev.Voiced.Seconds(), "pitched_s": ev.Pitched.Seconds()})
+		default:
+			e.ears.End()
+		}
 		e.open, e.uttEnd = false, time.Now()
 		e.voiced[e.seq], e.pitched[e.seq] = ev.Voiced, ev.Pitched
 		delete(e.voiced, e.seq-20)
@@ -356,6 +407,24 @@ func (e *Engine) phantomName(seq int, text string) bool {
 	}
 	e.Log("phantom_name", map[string]any{"seq": seq, "text": text, "voiced_s": v.Seconds(), "pitched_s": pv.Seconds()})
 	return true
+}
+
+// spotted logs the spotter's keyword in the open utterance (the first).
+func (e *Engine) spotted(hit string) {
+	if hit == "" || e.kwsHit != "" {
+		return
+	}
+	e.kwsHit = hit
+	e.Log("kws", map[string]any{"seq": e.seq, "keyword": hit, "held": e.holding, "since_start_ms": time.Since(e.uttT).Milliseconds()})
+}
+
+// release: her name was heard in a held utterance: it goes to the transcriber from its start.
+func (e *Engine) release() {
+	e.ears.Begin(e.seq)
+	for _, p := range e.held {
+		e.ears.Audio(p)
+	}
+	e.holding, e.held = false, nil
 }
 
 const lateEcho = 10 * time.Second

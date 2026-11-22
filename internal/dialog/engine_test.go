@@ -11,10 +11,13 @@ import (
 	"github.com/ibnHatab/fsttm/go/pkg/fsm"
 )
 
-type fakeEars struct{ begun []int }
+type fakeEars struct {
+	begun []int
+	audio int
+}
 
 func (f *fakeEars) Begin(seq int) { f.begun = append(f.begun, seq) }
-func (f *fakeEars) Audio([]byte)  {}
+func (f *fakeEars) Audio([]byte)  { f.audio++ }
 func (f *fakeEars) End()          {}
 
 type fakeMind struct {
@@ -362,5 +365,46 @@ func TestPhantomName(t *testing.T) {
 	say("Nina, turn off the lab ventilation.", 3*time.Second) // more than the name: not checked
 	if len(r.mind.turns) != 2 {
 		t.Fatalf("a command missed: %v", r.mind.turns)
+	}
+}
+
+type fakeSpotter struct{ on map[string]bool } // a keyword when the PCM is one of these
+
+func (f *fakeSpotter) Begin() {}
+func (f *fakeSpotter) Feed(p []byte) string {
+	if f.on[string(p)] {
+		return "NINA"
+	}
+	return ""
+}
+func (f *fakeSpotter) End() string { return "" }
+
+// asleep with the local wake word: only an utterance with her name reaches the transcriber,
+// from its start; awake, all of them
+func TestLocalWake(t *testing.T) {
+	sp := &fakeSpotter{on: map[string]bool{"nina": true}}
+	r := newRig(t, Config{StartAsleep: true, Wake: "local", Spotter: sp})
+	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("room")})
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("talk")})
+	r.e.onVad(audio.Event{Kind: audio.End})
+	if len(r.ears.begun) != 0 || r.ears.audio != 0 || !r.has("asleep_local") {
+		t.Fatalf("room talk sent: begun %v audio %d", r.ears.begun, r.ears.audio)
+	}
+	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("pre")})
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("x")})
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("nina")})
+	if len(r.ears.begun) != 1 || r.ears.audio != 3 || !r.has("kws") {
+		t.Fatalf("her name: begun %v audio %d (want the pre-roll and all)", r.ears.begun, r.ears.audio)
+	}
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("turn on the lab")})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: time.Second, Pitched: time.Second})
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Text: "Nina, turn on the lab.", Final: true})
+	if len(r.mind.turns) != 1 || r.ears.audio != 4 {
+		t.Fatalf("the call: turns %v audio %d", r.mind.turns, r.ears.audio)
+	}
+	r.reply("Done.")
+	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("awake")}) // awake: streamed
+	if len(r.ears.begun) != 2 {
+		t.Fatalf("awake, not streamed: %v", r.ears.begun)
 	}
 }

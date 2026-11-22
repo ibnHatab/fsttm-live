@@ -6,6 +6,7 @@ package nina
 import (
 	"context"
 	"fmt"
+	"github.com/ibnHatab/fsttm-live/internal/kws"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,7 +74,8 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	n.Engine = dialog.New(dialog.Config{FollowUp: cfg.Dialog.FollowUp, AwakeFor: cfg.Dialog.AwakeFor,
 		ReplyTimeout: 10 * time.Second, Knob: knob, NoteGap: cfg.Dialog.NoteGap,
 		Silent: !cfg.Prefs.Voice, StartAsleep: cfg.Dialog.StartAsleep,
-		Outlast: cfg.Audio.Hang + 600*time.Millisecond}, n.Ears, n.Mind, spk, nil, log.Ev)
+		Outlast: cfg.Audio.Hang + 600*time.Millisecond,
+		Wake:    cfg.Dialog.Wake.Mode, Spotter: spotter(cfg, log.Ev)}, n.Ears, n.Mind, spk, nil, log.Ev)
 	if t := localVoice(cfg.Prefs); t != nil {
 		n.Engine.SetLocal(t)
 	}
@@ -283,4 +285,20 @@ func (n *Nina) Sources(ctx context.Context, lines <-chan sources.Line) {
 			n.Engine.Notes <- dialog.Note{Level: lv, Text: l.Text} // filtered, it becomes context
 		}
 	}
+}
+
+// spotter loads the local wake word unless the mode is the cloud's; a model that does not load
+// leaves the cloud's.
+func spotter(cfg *config.Config, ev func(string, map[string]any)) dialog.Spotter {
+	w := cfg.Dialog.Wake
+	if w.Mode == "" || w.Mode == "cloud" {
+		return nil
+	}
+	k, err := kws.New(cfg.Expand(w.Model), cfg.Expand(w.Keywords), w.Threshold)
+	if err != nil {
+		ev("kws_error", map[string]any{"err": err.Error()})
+		return nil
+	}
+	ev("kws_ready", map[string]any{"mode": w.Mode})
+	return k
 }
