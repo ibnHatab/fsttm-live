@@ -1,0 +1,231 @@
+package live
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"google.golang.org/genai"
+)
+
+// MindEvent is what the voice session gives back for one turn.
+type MindKind int
+
+const (
+	MindAudio       MindKind = iota // PCM: 24 kHz s16le mono
+	MindSaid                        // Text: a piece of the output transcript
+	MindDone                        // the turn is complete
+	MindInterrupted                 // the server interrupted the turn (a newer turn arrived)
+	MindTool                        // Text: a tool call, for the log
+	MindClosed                      // the session ended (it resumes on the next turn)
+)
+
+type MindEvent struct {
+	Turn int // the id Turn returned
+	Kind MindKind
+	PCM  []byte
+	Text string
+}
+
+// ToolFunc answers one function call (synchronous tools: 3.1 Flash Live waits for them).
+type ToolFunc func(ctx context.Context, args map[string]any) map[string]any
+
+// Voice is the voice+mind: a native-audio Live session given text turns only (what the ears
+// heard and our attention passed, or a NOTE from SOURCES). Every event carries the id of the
+// turn it belongs to: the server answers turns in order and closes each with turnComplete
+// (a turn sent while the previous is still generating interrupts it, which closes it too).
+// Cancel stops delivering a turn's output (the speaker was cut); its tail is discarded here.
+// The session resumes with its handle when it ends, so the conversation's context survives.
+type Voice struct {
+	Client    *genai.Client
+	Model     string
+	VoiceName string
+	System    string
+	Tools     []*genai.Tool
+	Funcs     map[string]ToolFunc
+	Compress  int64 // context tokens that trigger the sliding window (0: off)
+	Out       chan<- MindEvent
+	Log       func(string, map[string]any)
+
+	mu     sync.Mutex
+	sess   *genai.Session
+	gen    int
+	handle string
+	goAway bool
+	nextID int
+	open   []*turnRec // sent and not yet closed, oldest first
+}
+
+type turnRec struct {
+	id        int
+	cancelled bool
+}
+
+func (v *Voice) config() *genai.LiveConnectConfig {
+	cfg := &genai.LiveConnectConfig{
+		ResponseModalities:       []genai.Modality{genai.ModalityAudio},
+		OutputAudioTranscription: &genai.AudioTranscriptionConfig{},
+		SystemInstruction:        &genai.Content{Parts: []*genai.Part{{Text: v.System}}},
+		Tools:                    v.Tools,
+		SessionResumption:        &genai.SessionResumptionConfig{Handle: v.handle},
+	}
+	if v.Compress > 0 {
+		tr, tg := v.Compress, v.Compress/2
+		cfg.ContextWindowCompression = &genai.ContextWindowCompressionConfig{TriggerTokens: &tr,
+			SlidingWindow: &genai.SlidingWindow{TargetTokens: &tg}}
+	}
+	if v.VoiceName != "" {
+		cfg.SpeechConfig = &genai.SpeechConfig{VoiceConfig: &genai.VoiceConfig{
+			PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{VoiceName: v.VoiceName}}}
+	}
+	return cfg
+}
+
+// connect opens the session (or resumes it). Called with v.mu held.
+func (v *Voice) connect(ctx context.Context) error {
+	t := time.Now()
+	s, err := v.Client.Live.Connect(ctx, v.Model, v.config())
+	if err != nil {
+		return err
+	}
+	v.gen++
+	v.sess, v.goAway, v.open = s, false, nil
+	v.Log("voice_connected", map[string]any{"ms": time.Since(t).Milliseconds(), "model": v.Model, "resumed": v.handle != ""})
+	go v.receive(ctx, s, v.gen)
+	return nil
+}
+
+func (v *Voice) Connect(ctx context.Context) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.connect(ctx)
+}
+
+// Turn sends one text turn and returns its id.
+func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	// a session told to go away is replaced between turns (the handle keeps the context)
+	if v.sess == nil || (v.goAway && len(v.open) == 0) {
+		if v.sess != nil {
+			v.sess.Close()
+			v.sess = nil
+		}
+		if err := v.connect(ctx); err != nil {
+			return 0, err
+		}
+	}
+	v.nextID++
+	tc := true
+	if err := v.sess.SendClientContent(genai.LiveClientContentInput{
+		Turns: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: text}}}}, TurnComplete: &tc}); err != nil {
+		return 0, err
+	}
+	v.open = append(v.open, &turnRec{id: v.nextID})
+	return v.nextID, nil
+}
+
+// Cancel stops delivering the output of turn id (the speaker was cut).
+func (v *Voice) Cancel(id int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.open {
+		if t.id == id {
+			t.cancelled = true
+		}
+	}
+}
+
+func (v *Voice) receive(ctx context.Context, s *genai.Session, gen int) {
+	for {
+		m, err := s.Receive()
+		v.mu.Lock()
+		if gen != v.gen {
+			v.mu.Unlock()
+			return
+		}
+		var evs []MindEvent
+		if err != nil {
+			v.sess = nil
+			v.Log("voice_closed", map[string]any{"err": err.Error(), "open_turns": len(v.open)})
+			for _, t := range v.open {
+				if !t.cancelled {
+					evs = append(evs, MindEvent{Turn: t.id, Kind: MindClosed, Text: err.Error()})
+				}
+			}
+			v.open = nil
+			v.mu.Unlock()
+			for _, e := range evs {
+				v.Out <- e
+			}
+			return
+		}
+		if u := m.SessionResumptionUpdate; u != nil && u.Resumable && u.NewHandle != "" {
+			v.handle = u.NewHandle
+		}
+		if m.GoAway != nil {
+			v.goAway = true
+			v.Log("voice_go_away", map[string]any{"left": m.GoAway.TimeLeft.String()})
+		}
+		var cur *turnRec
+		if len(v.open) > 0 {
+			cur = v.open[0]
+		}
+		deliver := func(e MindEvent) {
+			if cur != nil && !cur.cancelled {
+				e.Turn = cur.id
+				evs = append(evs, e)
+			}
+		}
+		if tc := m.ToolCall; tc != nil {
+			for _, fc := range tc.FunctionCalls {
+				deliver(MindEvent{Kind: MindTool, Text: fc.Name})
+				go v.callTool(ctx, s, fc) // answered even for a cancelled turn: it was asked
+			}
+		}
+		if m.UsageMetadata != nil {
+			v.Log("voice_usage", map[string]any{"prompt": m.UsageMetadata.PromptTokenCount, "total": m.UsageMetadata.TotalTokenCount})
+		}
+		if sc := m.ServerContent; sc != nil {
+			if sc.ModelTurn != nil {
+				for _, p := range sc.ModelTurn.Parts {
+					if p.InlineData != nil && len(p.InlineData.Data) > 0 {
+						deliver(MindEvent{Kind: MindAudio, PCM: p.InlineData.Data})
+					}
+				}
+			}
+			if sc.OutputTranscription != nil && sc.OutputTranscription.Text != "" {
+				deliver(MindEvent{Kind: MindSaid, Text: sc.OutputTranscription.Text})
+			}
+			if sc.Interrupted {
+				deliver(MindEvent{Kind: MindInterrupted})
+			}
+			if sc.TurnComplete {
+				deliver(MindEvent{Kind: MindDone})
+				if cur != nil {
+					v.Log("voice_turn_closed", map[string]any{"turn": cur.id, "cancelled": cur.cancelled, "interrupted": sc.Interrupted})
+					v.open = v.open[1:]
+				} else {
+					v.Log("voice_turn_closed", map[string]any{"turn": nil})
+				}
+			}
+		}
+		v.mu.Unlock()
+		for _, e := range evs {
+			v.Out <- e
+		}
+	}
+}
+
+func (v *Voice) callTool(ctx context.Context, s *genai.Session, fc *genai.FunctionCall) {
+	t := time.Now()
+	var res map[string]any
+	if f := v.Funcs[fc.Name]; f != nil {
+		res = f(ctx, fc.Args)
+	} else {
+		res = map[string]any{"error": "no such tool"}
+	}
+	v.Log("tool", map[string]any{"name": fc.Name, "args": fc.Args, "result": res, "ms": time.Since(t).Milliseconds()})
+	s.SendToolResponse(genai.LiveToolResponseInput{FunctionResponses: []*genai.FunctionResponse{
+		{ID: fc.ID, Name: fc.Name, Response: res}}})
+}

@@ -5,8 +5,8 @@ the ReSpeaker 4 Mic Array and a monitor in kiosk mode). The FSTTM floor machine 
 Eskenazi, N09-1071) owns the floor; Google's free tier does the hearing, the talking and the
 reasoning; Metis and the home's other SOURCES own the truth.
 
-Status: **phase 1, the spike** (`cmd/livespike`). The design below is what the spike's
-measurements support.
+Status: **phase 2, the floor** (`cmd/nina-live`): the floor machine drives both Live sessions
+end to end, acoustically, on a desktop with the ReSpeaker. Phase 1 was the spike (`cmd/livespike`).
 
 ## Roles (the same words in every prompt)
 
@@ -33,7 +33,36 @@ ReSpeaker ch0 ─▶ local VAD ─▶ FSTTM (endpointing, barge-in) ─▶ atten
 - Narration: semantic world → Metis infers → narration port (urgent / important / info) → a
   `NARRATE (level): …` turn when the floor machine gives the floor and the UI knob lets the level
   through; it stays in the voice session's context ("why did you mention the bedroom?" works).
-- Paradee/RHVoice and Whisper are not used: everything is on the free tier.
+- The voice: the Live session's own audio (unlimited on the free tier; Gemini's TTS models allow
+  10 requests a day). On a small machine RHVoice is the local voice (`-local rhvoice`): it speaks
+  the session's transcript sentence by sentence, and says the local phrases when the network is
+  down. Whisper is not used.
+
+## The floor (`internal/dialog`)
+
+FSTTM's floor machine and attention (`github.com/ibnHatab/fsttm/go/pkg/fsm`, `pkg/attention`),
+driven by our endpointer, the ears and the voice:
+
+| event | floor | |
+|---|---|---|
+| speech starts (local VAD) | user G: FREE → USER | while Nina holds the floor: *tentative* (her echo until proven otherwise) |
+| speech ends (700 ms hang) | user R: USER → FREEu | |
+| final text, addressed | system G: FREEu → SYSTEM | the text is a turn for the voice |
+| reply played | system R: SYSTEM → FREEs | attention touched; the follow-up window opens |
+| words Nina is not saying, while SYSTEM | barge-in: user G (BOTHs), system R (USER) | speaker cut locally, the turn's tail dropped; the next turn says what was heard |
+| NOTE from SOURCES | system G from FREE only | urgent at once, others after 2 s of free floor; the knob filters levels |
+
+- **Addressed**: asleep, only an utterance with her name (it wakes her); awake, one with her name
+  or within the follow-up window (12 s) after she spoke; anything else is an aside. Asleep again
+  after 90 s without a turn, or "Nina, go to sleep".
+- **Echo without a canceller**: the ears transcribe Nina too; an utterance that started while she
+  held the floor is compared with her output transcript: her words are echo, two new words (or
+  "stop", "wait"…) are a barge-in, and only the new words reach the voice.
+- **Ears**: the transcribe model sends only interim text, accumulated over its session without
+  separators; the ears cut out each utterance and call it final at sentence punctuation that held
+  200 ms, or 1.5 s after our end.
+- **Voice**: turns are tracked by id: a turn sent while the previous one is still generating
+  interrupts it, and every event is attributed to its own turn (a cut reply's tail is dropped).
 
 ## Measurements (Pascal, 2026-11-22; `runs/` is not in git)
 
@@ -52,9 +81,39 @@ Free tier of the project's key (AI Studio rate limits): Live models unlimited re
 | 3.5 Transcribe Live, manual activity, **acoustic** (speaker → room → ReSpeaker ch0, WebRTC VAD, hang 700 ms) | 6 of 6 exact (incl. "lab Prana in night mode"); text ready 80–330 ms after our end; one transcript arrived ~5 s late |
 | 3.1 Flash Live tokens | ~2.2K prompt tokens per turn after 9 turns |
 
-Open: echo (Nina heard by the array) until the speaker is on the ReSpeaker's jack (its channel 5,
-the echo reference, is silent on Pascal); session limits (10 min transcribe, ~10 min connection)
-with resumption; the charter must not leak its labels ("USER, just so you know").
+Phase 2, `nina-live` acoustically (Pascal: the person is a WAV from the PC's speaker, Nina plays
+from the same speaker; `testdata/scripts/basic.txt`):
+
+| test | result |
+|---|---|
+| asleep: "Is the bedroom ventilation running?", "What's on the living room TV?" | ignored |
+| wake, two commands (tools right), ambiguous command ("the lab or the bedroom?"), sleep | right; final text 0.41–0.45 s after our end; first audio 0.8–1.3 s after the turn (1.2–1.7 s after the end of speech) |
+| Nina's echo (no canceller): 7 replies, each heard in full by the ears | 7 of 7 rejected by the transcript comparison |
+| an aside 20 s after she spoke | ignored |
+| NOTE (important) while the person had the floor | waited; narrated when the floor was free ("I've noticed the CO2 in the bedroom is getting high…") |
+| "Nina, stop." over a long reply, **no canceller** (same speaker, same level) | **missed**: the ears heard only Nina; barge-in needs echo cancellation |
+| the same through PulseAudio's WebRTC canceller (`scripts/pascal-aec.sh`, ~10 dB off the echo, person 0 dB) | cut **90 ms after the person's last word**; next turn "Okay." with what was heard |
+| `-local rhvoice` | works; first audio 1.6–2.3 s (a sentence of transcript first); its robotic echo transcribes worse (one false barge-in) |
+
+The ReSpeaker's hardware canceller is not tested yet: nothing audible is plugged into its jack
+(channel 5 carries the reference when Nina plays to `plughw:ArrayUAC10`, the raw mics stay at
+noise). With a speaker on the jack: `-out plughw:ArrayUAC10`.
+
+Open: the ReSpeaker's own AEC (a speaker on its jack); the Metis reasoning channel (tools and
+the narration port); the panel (mic/voice switches, the knob); session resumption across the
+10-minute limit (handles are kept, not yet exercised); the Raspberry Pi build.
+
+## Run
+
+```sh
+go build -o bin/nina-live ./cmd/nina-live
+bin/nina-live                                    # the ReSpeaker, Nina on the default output; type lines too
+bin/nina-live -script testdata/scripts/basic.txt -log runs/x.jsonl -q   # the acoustic test
+scripts/pascal-aec.sh up && bin/nina-live -dev pulse:nina_ec_source -channels 1 -ref -1 \
+    -out pulse:nina_ec_sink -person-sink "$(pactl get-default-sink)" -script testdata/scripts/basic.txt
+```
+
+Typed lines: plain text is the person's words; `/note important …` a NOTE; `/say …` verbatim.
 
 ## Spike
 

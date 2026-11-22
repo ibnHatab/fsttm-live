@@ -1,0 +1,8 @@
+# wake, a command, a barge-in, sleep
+play ../utt/wake.wav
+play ../utt/vent_on.wav
+idle
+type Nina, tell me in detail how a heat recovery ventilator works, step by step.
+barge 2.5 ../utt/stop.wav
+idle
+play ../utt/sleep.wav

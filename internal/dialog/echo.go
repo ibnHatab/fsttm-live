@@ -1,0 +1,103 @@
+package dialog
+
+import (
+	"regexp"
+	"strings"
+)
+
+// Without a working echo canceller (Nina on a speaker the array has no reference for) the
+// microphone hears Nina at the level of a person. The ears transcribe her, so what they hear
+// while she speaks is compared with what she is saying (her output transcript): her own words
+// are echo; words she did not say are the person barging in.
+
+var nonWord = regexp.MustCompile(`[^\p{L}\p{N}' ]+`)
+
+func words(s string) []string {
+	return strings.Fields(nonWord.ReplaceAllString(strings.ToLower(s), " "))
+}
+
+// interrupters are words that barge in alone. Not her name: the transcriber's vocabulary bias
+// puts a phantom "Nina" into her own echo.
+var interrupters = map[string]bool{"stop": true, "wait": true, "quiet": true, "enough": true, "cancel": true}
+
+// Novel returns the words of heard that are not in said (with a typo's tolerance).
+func Novel(heard, said string) []string {
+	known := map[string]bool{}
+	sw := words(said)
+	for _, w := range sw {
+		known[w] = true
+	}
+	var out []string
+	for _, w := range words(heard) {
+		if known[w] {
+			continue
+		}
+		near := false
+		if len([]rune(w)) >= 4 {
+			for _, s := range sw {
+				if editAtMost1(w, s) {
+					near = true
+					break
+				}
+			}
+		}
+		if !near {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// BargeIn decides from the novel words: two or more, or one interrupter.
+func BargeIn(novel []string) bool {
+	if len(novel) >= 2 {
+		return true
+	}
+	for _, w := range novel {
+		if interrupters[w] {
+			return true
+		}
+	}
+	return false
+}
+
+func editAtMost1(a, b string) bool {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) < len(rb) {
+		ra, rb = rb, ra
+	}
+	if len(ra)-len(rb) > 1 {
+		return false
+	}
+	i, j, d := 0, 0, 0
+	for i < len(ra) && j < len(rb) {
+		if ra[i] == rb[j] {
+			i++
+			j++
+			continue
+		}
+		d++
+		if d > 1 {
+			return false
+		}
+		if len(ra) == len(rb) {
+			j++
+		}
+		i++
+	}
+	return d+(len(ra)-i) <= 1
+}
+
+// HeardPart is the beginning of said that fits in heard/written of its audio: what the person
+// heard before the cut, for the next turn's note.
+func HeardPart(said string, frac float64) string {
+	w := strings.Fields(said)
+	n := int(float64(len(w))*frac + 0.5)
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(w) {
+		return said
+	}
+	return strings.Join(w[:n], " ") + " …"
+}

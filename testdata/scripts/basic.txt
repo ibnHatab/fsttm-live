@@ -1,0 +1,17 @@
+# The floor end to end, acoustically: the person is a WAV from the PC's speaker, Nina plays
+# from -out. Asleep at the start.
+play ../utt/vent_q.wav
+play ../utt/wake.wav
+play ../utt/vent_on.wav
+play ../utt/night.wav
+play ../utt/ambig.wav
+idle
+wait 13
+play ../utt/aside.wav
+note important The bedroom's CO2 is rising: 1400 ppm, the window is closed.
+idle
+type Nina, tell me in detail how a heat recovery ventilator works, step by step.
+barge 2.5 ../utt/stop.wav
+idle
+play ../utt/sleep.wav
+play ../utt/tv.wav
