@@ -200,7 +200,9 @@ func (e *Ears) loop(ctx context.Context) {
 			// rewritten): what it heard while the person spoke stands
 			final = lastSeg
 			h.Text = final
-			e.Log("final_from_interim", map[string]any{"seq": seq, "text": final})
+			tail := func(s string) string { return s[max(0, len(s)-120):] }
+			e.Log("final_from_interim", map[string]any{"seq": seq, "text": final,
+				"base_len": len(base), "full_len": len(full), "base_tail": tail(base), "full_tail": tail(full)})
 		}
 		e.Out <- h
 	}
