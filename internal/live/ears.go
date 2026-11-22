@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"google.golang.org/genai"
 )
@@ -110,6 +111,27 @@ func (e *Ears) connect(ctx context.Context, gen int, texts chan<- earsText) (*ge
 	return s, nil
 }
 
+// VocabEcho tells a transcript that is only the custom vocabulary read back ("Nina, Prana, lab,
+// bedroom, …"): the model's answer to noise or speech it can't make out. Three or more entries
+// and nothing else but "and" and punctuation.
+func VocabEcho(s string, vocab []string) bool {
+	rest := " " + strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, s) + " "
+	n := 0
+	for _, v := range vocab { // longest first would matter only for nested entries
+		w := " " + strings.ToLower(v) + " "
+		for strings.Contains(rest, w) {
+			rest = strings.Replace(rest, w, " ", 1)
+			n++
+		}
+	}
+	return n >= 3 && strings.Trim(strings.ReplaceAll(rest, " and ", " "), " ") == ""
+}
+
 func (e *Ears) loop(ctx context.Context) {
 	texts := make(chan earsText, 256)
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -126,16 +148,27 @@ func (e *Ears) loop(ctx context.Context) {
 		final      string
 		finalSent  bool
 		lastSeg    string
+		lastEcho   string
 	)
 	seg := func() string {
+		var s string
 		if strings.HasPrefix(full, base) {
-			return strings.TrimSpace(full[len(base):])
+			s = strings.TrimSpace(full[len(base):])
+		} else {
+			n := 0
+			for n < len(full) && n < len(base) && full[n] == base[n] {
+				n++
+			}
+			s = strings.TrimSpace(full[n:])
 		}
-		n := 0
-		for n < len(full) && n < len(base) && full[n] == base[n] {
-			n++
+		if VocabEcho(s, e.Vocab) {
+			if s != lastEcho {
+				lastEcho = s
+				e.Log("vocab_echo", map[string]any{"text": s})
+			}
+			return ""
 		}
-		return strings.TrimSpace(full[n:])
+		return s
 	}
 	ensure := func() bool {
 		if sess != nil && time.Since(born) < e.MaxAge {
