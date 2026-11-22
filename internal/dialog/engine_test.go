@@ -68,7 +68,7 @@ func (r *rig) utter(text string) {
 	r.e.onVad(audio.Event{Kind: audio.Start})
 	seq := r.e.seq
 	r.e.onHeard(live.Heard{Seq: seq, Text: text})
-	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 600 * time.Millisecond})
 	r.e.onHeard(live.Heard{Seq: seq, Text: text, Final: true})
 }
 
@@ -315,5 +315,29 @@ func TestAfterEcho(t *testing.T) {
 		if got := AfterEcho(h, said); got != want {
 			t.Errorf("AfterEcho(%q) = %q, want %q", h, got, want)
 		}
+	}
+}
+
+func TestPhantomName(t *testing.T) {
+	r := newRig(t, Config{StartAsleep: true})
+	say := func(text string, voiced time.Duration) {
+		r.e.onVad(audio.Event{Kind: audio.Start})
+		seq := r.e.seq
+		r.e.onVad(audio.Event{Kind: audio.End, Voiced: voiced})
+		r.e.onHeard(live.Heard{Seq: seq, Text: text, Final: true})
+	}
+	say("Nina.", 120*time.Millisecond)  // a knock
+	say("Nina.", 3700*time.Millisecond) // speech it could not make out
+	if len(r.mind.turns) != 0 || r.e.Attn.Awake() || !r.has("phantom_name") {
+		t.Fatalf("a phantom name woke her: %v", r.mind.turns)
+	}
+	say("Hey Nina.", 560*time.Millisecond)
+	if len(r.mind.turns) != 1 {
+		t.Fatalf("a real call missed: %v", r.mind.turns)
+	}
+	r.reply("Yes?")
+	say("Nina, turn off the lab ventilation.", 3*time.Second) // more than the name: not checked
+	if len(r.mind.turns) != 2 {
+		t.Fatalf("a command missed: %v", r.mind.turns)
 	}
 }

@@ -119,6 +119,7 @@ type Engine struct {
 	open    bool
 	uttT    time.Time
 	outlast map[int]bool // tentative utterances that went on after her reply ended
+	voiced  map[int]time.Duration
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
@@ -161,6 +162,7 @@ func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string
 		tent:    map[int]bool{},
 		echoOf:  map[int]string{},
 		outlast: map[int]bool{},
+		voiced:  map[int]time.Duration{},
 		freeT:   time.Now(),
 	}
 	e.Attn.AwakeFor = cfg.AwakeFor
@@ -245,6 +247,8 @@ func (e *Engine) onVad(ev audio.Event) {
 		}
 		e.ears.End()
 		e.open, e.uttEnd = false, time.Now()
+		e.voiced[e.seq] = ev.Voiced
+		delete(e.voiced, e.seq-20)
 		if e.tent[e.seq] && !e.replying && e.cfg.Outlast > 0 && e.lastSpoke.After(e.uttT) &&
 			time.Since(e.lastSpoke) >= e.cfg.Outlast {
 			e.outlast[e.seq] = true
@@ -287,7 +291,9 @@ func (e *Engine) onHeard(h live.Heard) {
 			delete(e.outlast, h.Seq)
 			if rest := AfterEcho(h.Text, e.said.String()+" "+e.prevSaid); out && rest != "" {
 				e.Log("outlasted", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": rest})
-				e.dispatch(rest, false)
+				if !e.phantomName(h.Seq, rest) {
+					e.dispatch(rest, false)
+				}
 				return
 			}
 			e.Log("echo", map[string]any{"seq": h.Seq, "text": h.Text})
@@ -313,11 +319,39 @@ func (e *Engine) onHeard(h live.Heard) {
 		}
 		e.Log("echo_stripped", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": text})
 	}
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(text) == "" || e.phantomName(h.Seq, text) {
 		return
 	}
 	e.dispatch(text, false)
 }
+
+// phantomName: her name alone ("Nina.", "Hey Nina.") from a sound too short or too long to be
+// someone saying it. The transcriber's vocabulary bias writes "Nina" for a knock, a cough or
+// speech it can't make out; a spoken name has 0.3–0.7 s of voice.
+func (e *Engine) phantomName(seq int, text string) bool {
+	var rest []string
+	for _, w := range words(text) {
+		if !greeting[w] {
+			rest = append(rest, w)
+		}
+	}
+	if len(rest) != 1 {
+		return false
+	}
+	if ok, _ := e.Attn.MatchWake(rest[0]); !ok {
+		return false
+	}
+	v, ok := e.voiced[seq]
+	if !ok || (v >= minNameVoiced && v <= maxNameVoiced) {
+		return false
+	}
+	e.Log("phantom_name", map[string]any{"seq": seq, "text": text, "voiced_s": v.Seconds()})
+	return true
+}
+
+const minNameVoiced, maxNameVoiced = 250 * time.Millisecond, 2 * time.Second
+
+var greeting = map[string]bool{"hey": true, "hi": true, "hello": true, "ok": true, "okay": true, "oh": true}
 
 // checkBarge: words in a tentative utterance that Nina is not saying are the person's.
 func (e *Engine) checkBarge(seq int, text string) {
