@@ -274,7 +274,7 @@ func (n *Nina) Sources(ctx context.Context, lines <-chan sources.Line) {
 		case l := <-lines:
 			lv, ok := dialog.ParseLevel(l.Level)
 			if !ok || lv == dialog.Off {
-				n.Mind.Context(l.Text)
+				n.Mind.ContextKey(l.Key, l.Text)
 				n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": "context", "text": l.Text})
 				continue
 			}

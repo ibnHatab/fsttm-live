@@ -55,7 +55,7 @@ type Voice struct {
 	goAway bool
 	nextID int
 	open   []*turnRec // sent and not yet closed, oldest first
-	ctxq   []string   // what SOURCES reported since the last turn: sent with the next one
+	ctxq   []ctxLine  // what SOURCES reported since the last turn: sent with the next one
 }
 
 type turnRec struct {
@@ -128,7 +128,11 @@ func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
 	turns := []*genai.Content{}
 	if len(v.ctxq) > 0 {
 		// silent context: what the home's systems reported meanwhile, ahead of the turn
-		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "HOME (reported by the home's systems since your last turn; for you, not to announce):\n" + strings.Join(v.ctxq, "\n")}}})
+		var ls []string
+		for _, c := range v.ctxq {
+			ls = append(ls, c.text)
+		}
+		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "HOME (reported by the home's systems since your last turn; for you, not to announce):\n" + strings.Join(ls, "\n")}}})
 		v.Log("voice_context", map[string]any{"lines": len(v.ctxq)})
 		v.ctxq = nil
 	}
@@ -272,13 +276,26 @@ func (v *Voice) SetVoiceName(name string) {
 	v.goAway = true
 }
 
+type ctxLine struct{ key, text string }
+
 // Context queues a line SOURCES reported; it reaches the session with the next turn (a
 // content sent alone would leave a turn open, and one sent while she speaks would cut her).
-func (v *Voice) Context(line string) {
+func (v *Voice) Context(line string) { v.ContextKey("", line) }
+
+// ContextKey queues a keyed line (an entity's state): a newer one replaces the older.
+func (v *Voice) ContextKey(key, line string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.ctxq = append(v.ctxq, line)
-	if len(v.ctxq) > 40 {
-		v.ctxq = v.ctxq[len(v.ctxq)-40:]
+	if key != "" {
+		for i, c := range v.ctxq {
+			if c.key == key {
+				v.ctxq = append(v.ctxq[:i], v.ctxq[i+1:]...)
+				break
+			}
+		}
+	}
+	v.ctxq = append(v.ctxq, ctxLine{key, line})
+	if len(v.ctxq) > 80 {
+		v.ctxq = v.ctxq[len(v.ctxq)-80:]
 	}
 }

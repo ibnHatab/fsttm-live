@@ -36,6 +36,7 @@ type Metis struct {
 
 // Line is one thing SOURCES said, routed: Level "context" goes to the voice session silently.
 type Line struct {
+	Key   string // env: the entity (a newer line replaces the older)
 	Kind  string // result, noticed, surprise, error, env, other
 	Level string
 	Text  string
@@ -118,7 +119,7 @@ func (m *Metis) route(b []byte) (Line, bool) {
 	l := Line{Text: *ev.Text, Kind: "other"}
 	switch ev.Stream {
 	case "env":
-		l.Kind = "env"
+		l.Kind, l.Key = "env", ev.Key
 		if ev.Key != "" {
 			l.Text = ev.Key + ": " + l.Text
 		}
