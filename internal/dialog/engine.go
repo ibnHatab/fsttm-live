@@ -32,6 +32,8 @@ type Ears interface {
 type Mind interface {
 	Turn(ctx context.Context, text string) (int, error)
 	Cancel(turn int)
+	Close() // asleep: the Live API has no sleep, so the session is closed (it resumes on the next turn)
+	Connected() bool
 }
 
 type Speaker interface {
@@ -51,9 +53,10 @@ const (
 	Info Level = iota
 	Important
 	Urgent
+	Off // as a knob: no NOTE is spoken
 )
 
-func (l Level) String() string { return [...]string{"info", "important", "urgent"}[l] }
+func (l Level) String() string { return [...]string{"info", "important", "urgent", "off"}[l] }
 
 func ParseLevel(s string) (Level, bool) {
 	switch strings.ToLower(s) {
@@ -63,6 +66,8 @@ func ParseLevel(s string) (Level, bool) {
 		return Important, true
 	case "urgent":
 		return Urgent, true
+	case "off":
+		return Off, true
 	}
 	return Info, false
 }
@@ -78,9 +83,10 @@ type Config struct {
 	FollowUp     time.Duration
 	AwakeFor     time.Duration // asleep again after this long without a turn
 	ReplyTimeout time.Duration // no audio this long after a turn: the floor is released
-	Knob         Level         // the lowest NOTE level spoken while awake (urgent always)
+	Knob         Level         // the lowest NOTE level spoken while awake (urgent also asleep; Off: none)
 	NoteGap      time.Duration // a NOTE waits until the floor has been free this long
 	LocalVoice   bool          // speak the mind's transcript with TTS, not its audio
+	Silent       bool          // her sound off: replies are shown, not played
 	StartAsleep  bool
 }
 
@@ -100,6 +106,7 @@ type Engine struct {
 	SpkDone chan bool
 	Notes   chan Note
 	Typed   chan string
+	Ctl     chan func(*Engine) // a plugin's action, run in the dialog's goroutine
 
 	ctx context.Context
 
@@ -125,8 +132,10 @@ type Engine struct {
 	lastSpoke time.Time
 	freeT     time.Time // when the floor last became free
 
-	pending []Note
-	awake   bool
+	pending   []Note
+	awake     bool
+	addressed time.Time // until then an utterance is meant for her without her name (a button's talk)
+	status    atomic.Value
 
 	idle     atomic.Bool  // for the test driver: the floor free, nothing heard or said
 	speaking atomic.Int64 // unix ms when the current reply's audio started, 0 if none
@@ -142,12 +151,14 @@ func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string
 		SpkDone: make(chan bool, 8),
 		Notes:   make(chan Note, 64),
 		Typed:   make(chan string, 16),
+		Ctl:     make(chan func(*Engine), 16),
 		tent:    map[int]bool{},
 		echoOf:  map[int]string{},
 		freeT:   time.Now(),
 	}
 	e.Attn.AwakeFor = cfg.AwakeFor
 	e.awake = e.Attn.Awake()
+	e.status.Store(Status{Floor: string(e.Turn.State), Awake: e.awake})
 	e.Turn.OnChange = func(ev string, src, dst fsm.State) {
 		e.Log("floor", map[string]any{"event": ev, "from": string(src), "to": string(dst)})
 		if dst == fsm.FreeU || dst == fsm.FreeS {
@@ -175,9 +186,13 @@ func (e *Engine) Run(ctx context.Context) {
 	for {
 		e.tryNote()
 		e.idle.Store(!e.replying && !e.open && e.isFree())
+		e.status.Store(Status{Floor: string(e.Turn.State), Awake: e.Attn.Peek(), Hearing: e.open,
+			Replying: e.replying, Speaking: e.speaking.Load() != 0, Mind: e.mind.Connected(), Pending: len(e.pending)})
 		select {
 		case <-ctx.Done():
 			return
+		case f := <-e.Ctl:
+			f(e)
 		case ev := <-e.Vad:
 			e.onVad(ev)
 		case h := <-e.Heard:
@@ -236,6 +251,9 @@ func (e *Engine) onHeard(h live.Heard) {
 		if h.Seq == e.seq {
 			e.interim = h.Text
 		}
+		if !e.tent[h.Seq] {
+			e.Log("interim", map[string]any{"seq": h.Seq, "text": h.Text})
+		}
 		if e.tent[h.Seq] {
 			e.checkBarge(h.Seq, h.Text)
 		}
@@ -261,8 +279,16 @@ func (e *Engine) onHeard(h live.Heard) {
 	delete(e.tent, h.Seq)
 	text := h.Text
 	if said, ok := e.echoOf[h.Seq]; ok {
-		// a barge-in over her voice: only the words she was not saying are the person's
+		// a barge-in over her voice (or an utterance she spoke into): only the words she was
+		// not saying are the person's
 		delete(e.echoOf, h.Seq)
+		if said == "" {
+			said = e.said.String()
+			if !BargeIn(Novel(text, said)) {
+				e.Log("echo", map[string]any{"seq": h.Seq, "text": text, "overlap": true})
+				return
+			}
+		}
 		if novel := Novel(text, said); len(novel) < len(words(text)) {
 			text = strings.Join(novel, " ") // keep the person's own wording when none of it was echo
 		}
@@ -328,7 +354,8 @@ func (e *Engine) dispatch(text string, typed bool) {
 		return
 	}
 	named, _ := e.Attn.MatchWake(text)
-	followUp := e.cfg.FollowUp == 0 || (!e.lastSpoke.IsZero() && time.Since(e.lastSpoke) < e.cfg.FollowUp)
+	followUp := e.cfg.FollowUp == 0 || (!e.lastSpoke.IsZero() && time.Since(e.lastSpoke) < e.cfg.FollowUp) ||
+		time.Now().Before(e.addressed)
 	if !named && !followUp && !typed {
 		e.Log("aside", map[string]any{"text": text, "since_spoke_s": time.Since(e.lastSpoke).Seconds()})
 		return
@@ -362,6 +389,11 @@ func (e *Engine) send(text string) {
 }
 
 func (e *Engine) beginReply() {
+	if e.open && !e.tent[e.seq] {
+		// an utterance still open when she takes the floor will carry her voice: what it
+		// heard is checked against what she said, like a barge-in's
+		e.echoOf[e.seq] = ""
+	}
 	e.replying, e.mindDone, e.audioOut = true, false, false
 	e.sentT, e.firstT = time.Now(), time.Time{}
 	e.said.Reset()
@@ -389,6 +421,9 @@ func (e *Engine) say(text string) {
 }
 
 func (e *Engine) out(pcm []byte) {
+	if e.cfg.Silent {
+		return // shown, not played: the reply ends when the mind's turn does
+	}
 	if !e.audioOut {
 		e.audioOut, e.firstT = true, time.Now()
 		e.speaking.Store(e.firstT.UnixMilli())
@@ -411,6 +446,7 @@ func (e *Engine) onMind(m live.MindEvent) {
 		}
 	case live.MindSaid:
 		e.said.WriteString(m.Text)
+		e.Log("said", map[string]any{"text": m.Text})
 		if e.cfg.LocalVoice {
 			e.localBuf.WriteString(m.Text)
 			e.speakLocal(false)
@@ -476,7 +512,7 @@ func (e *Engine) finishReply() {
 // ---- notes from SOURCES ----------------------------------------------------------------
 
 func (e *Engine) onNote(n Note) {
-	if n.Level < Urgent && (n.Level < e.cfg.Knob || !e.Attn.Awake()) {
+	if e.cfg.Knob == Off || (n.Level < Urgent && (n.Level < e.cfg.Knob || !e.Attn.Awake())) {
 		e.Log("note_filtered", map[string]any{"level": n.Level.String(), "text": n.Text, "awake": e.Attn.Awake()})
 		return
 	}
@@ -558,4 +594,93 @@ func (e *Engine) awakeChanged() {
 		e.awake = a
 		e.Log("attention", map[string]any{"awake": a})
 	}
+	if !e.awake && !e.replying && e.mind.Connected() {
+		// asleep and her goodbye played: close the session (the Live API has no sleep); a wake or
+		// an urgent NOTE resumes it with its handle, the conversation's context intact
+		e.mind.Close()
+		e.Log("mind_closed_asleep", nil)
+	}
 }
+
+// ---- control (plugins) ----------------------------------------------------------------
+
+// Status is the snapshot plugins read (any goroutine).
+type Status struct {
+	Floor    string
+	Awake    bool
+	Hearing  bool
+	Replying bool
+	Speaking bool
+	Mind     bool
+	Pending  int
+}
+
+func (e *Engine) Status() Status { return e.status.Load().(Status) }
+
+// Do runs f in the dialog's goroutine and waits for it.
+func (e *Engine) Do(f func(*Engine)) {
+	done := make(chan struct{})
+	e.Ctl <- func(e *Engine) { f(e); close(done) }
+	<-done
+}
+
+// Wake: awake, and the next utterance is meant for her without her name.
+func (e *Engine) Wake() {
+	if !e.Attn.Awake() {
+		e.Attn.OnUtterance("nina") // the wake word, as if said
+	}
+	e.Attn.Touch()
+	e.addressed = time.Now().Add(max(e.cfg.FollowUp, 8*time.Second))
+	e.Log("wake", nil)
+	e.awakeChanged()
+}
+
+// Sleep: what she says is cut, attention asleep, her session closed.
+func (e *Engine) Sleep() {
+	if e.replying {
+		e.cut()
+		_ = e.Turn.UserAction('R')
+	}
+	e.Attn.State = attention.Asleep
+	e.addressed = time.Time{}
+	e.Log("sleep", nil)
+	e.awakeChanged()
+}
+
+// Stop cuts what she is saying; the floor goes free.
+func (e *Engine) Stop() {
+	if !e.replying {
+		return
+	}
+	e.cut()
+	e.cutNote = "" // stopped on purpose: nothing to explain to her
+	_ = e.Turn.UserAction('R')
+	e.Log("stop", nil)
+}
+
+// Talk is a button: stop her if she speaks, else wake her.
+func (e *Engine) Talk() {
+	if e.replying {
+		e.Stop()
+		return
+	}
+	e.Wake()
+}
+
+func (e *Engine) SetSilent(on bool) {
+	if on && e.replying && e.audioOut {
+		e.Stop()
+	}
+	e.cfg.Silent = on
+}
+
+func (e *Engine) SetKnob(l Level) { e.cfg.Knob = l }
+
+// SetLocal switches the voice between the mind's audio (tts nil) and a local TTS.
+func (e *Engine) SetLocal(tts TTS) {
+	e.tts = tts
+	e.cfg.LocalVoice = tts != nil
+}
+
+func (e *Engine) Note(n Note)       { e.onNote(n) }
+func (e *Engine) TypeLine(t string) { e.onTyped(t) }

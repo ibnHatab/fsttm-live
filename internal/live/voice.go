@@ -85,6 +85,12 @@ func (v *Voice) config() *genai.LiveConnectConfig {
 func (v *Voice) connect(ctx context.Context) error {
 	t := time.Now()
 	s, err := v.Client.Live.Connect(ctx, v.Model, v.config())
+	if err != nil && v.handle != "" {
+		// the handle expired (or the setup changed too much to resume): a fresh session
+		v.Log("voice_resume_failed", map[string]any{"err": err.Error()})
+		v.handle = ""
+		s, err = v.Client.Live.Connect(ctx, v.Model, v.config())
+	}
 	if err != nil {
 		return err
 	}
@@ -228,4 +234,31 @@ func (v *Voice) callTool(ctx context.Context, s *genai.Session, fc *genai.Functi
 	v.Log("tool", map[string]any{"name": fc.Name, "args": fc.Args, "result": res, "ms": time.Since(t).Milliseconds()})
 	s.SendToolResponse(genai.LiveToolResponseInput{FunctionResponses: []*genai.FunctionResponse{
 		{ID: fc.ID, Name: fc.Name, Response: res}}})
+}
+
+// Close ends the session now (asleep); the next turn resumes it with the handle.
+func (v *Voice) Close() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.sess != nil {
+		v.gen++ // its receiver exits without reporting
+		v.sess.Close()
+		v.sess = nil
+		v.open = nil
+		v.Log("voice_session_closed", map[string]any{"handle": v.handle != ""})
+	}
+}
+
+func (v *Voice) Connected() bool { v.mu.Lock(); defer v.mu.Unlock(); return v.sess != nil }
+
+// SetVoiceName takes effect at the next turn: the session is replaced between turns and
+// resumed with the new voice.
+func (v *Voice) SetVoiceName(name string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if name == v.VoiceName {
+		return
+	}
+	v.VoiceName = name
+	v.goAway = true
 }

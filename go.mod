@@ -4,7 +4,11 @@ go 1.25.0
 
 require google.golang.org/genai v1.79.1
 
-require github.com/ibnHatab/fsttm/go v0.0.0-20261122153613-e28e1af02c58
+require (
+	github.com/ibnHatab/fsttm/go v0.0.0-20261122153613-e28e1af02c58
+	github.com/warthog618/go-gpiocdev v0.10.0
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

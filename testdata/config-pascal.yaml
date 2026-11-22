@@ -1,0 +1,53 @@
+# nina-live: the machine's settings, the person's preferences, the plugins.
+# Relative paths are relative to this file; ~/ is the home directory.
+
+key: ~/.config/fsttm/gemini.key          # the AI Studio key's file (chmod 600); never the key here
+charter: charter-v2.txt                  # relative to this file
+
+models:
+  ears: gemini-3.5-transcribe-live       # text only, under our endpointing
+  mind: gemini-3.1-flash-live-preview    # the voice+mind: text turns in, audio out
+  vocab: [Nina, Prana, lab, bedroom, living room, ventilation, night mode, boost]
+
+audio:
+  device: hw:ArrayUAC10                  # capture: ALSA, or pulse:SOURCE
+  channels: 6                            # the ReSpeaker's 6-channel firmware
+  speech: 0                              # its processed speech channel
+  ref: 5                                 # its echo reference channel (-1: none)
+  out: ""                                # playback: aplay -D (plughw:ArrayUAC10: the ReSpeaker's jack), pulse:SINK; "" default
+  vad_mode: 3
+  hang: 700ms                            # silence that ends an utterance
+  max_utterance: 25s
+
+dialog:
+  follow_up: 12s                         # meant for her without her name this long after she spoke
+  awake_for: 90s                         # asleep (and her session closed) after this long without a turn
+  start_asleep: true
+  note_gap: 2s                           # a NOTE waits for the floor to be free this long
+
+# Changed at run time by the plugins (the web panel, the buttons) and written back here.
+prefs:
+  mic: true
+  voice: true
+  voice_name: ""                         # a Live voice (Puck, Kore, Aoede, …); "" the model's
+  local: ""                              # "" the Live audio; rhvoice (small machines), paradee (a desktop's socket): a local voice speaks her transcript
+  rhvoice: slt
+  paradee: af_heart
+  narration: important                   # the lowest NOTE level spoken: info, important, urgent, off
+
+plugins:
+  web:                                   # the panel: preferences, status, the conversation; a kiosk's screen
+    enabled: true
+    addr: ":8770"
+  gpio:                                  # buttons and lights on a Raspberry Pi (BCM line numbers)
+    enabled: false
+    chip: gpiochip0
+    debounce: 30ms
+    long_press: 1200ms
+    buttons:
+      - {line: 17, press: talk, long: sleep}   # talk: wake her (or stop her if she speaks); long: sleep
+      - {line: 27, press: mic}                 # the mic on and off
+      - {line: 22, press: voice}               # her sound on and off
+    lights:
+      - {line: 5, show: awake}
+      - {line: 6, show: speaking}

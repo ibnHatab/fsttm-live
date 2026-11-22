@@ -100,29 +100,45 @@ The ReSpeaker's hardware canceller is not tested yet: nothing audible is plugged
 noise). With a speaker on the jack: `-out plughw:ArrayUAC10`.
 
 Open: the ReSpeaker's own AEC (a speaker on its jack); the Metis reasoning channel (tools and
-the narration port); the panel (mic/voice switches, the knob); session resumption across the
-10-minute limit (handles are kept, not yet exercised); the Raspberry Pi build.
+the narration port); the Raspberry Pi build (cgo for the WebRTC VAD: build on the Pi or with an
+aarch64 cross compiler).
+
+## Config, preferences, plugins
+
+One file (`-config`, default `~/.config/fsttm-live/config.yaml`, created from
+`internal/config/default.yaml` when missing; `testdata/config-pascal.yaml` is Pascal's):
+
+- the machine's settings: the key's file, the charter, the models, the sound devices, the dialog's
+  timing;
+- `prefs`: what the person changes while Nina runs (mic, voice, the Live voice, the local voice,
+  the narration level), changed by any plugin and written back into the file, its comments kept;
+- `plugins`: one block each, `enabled` or not; several run at once (set her up on the panel, drive
+  her with the buttons). Each gets the same host: preferences, status, events, actions (talk, wake,
+  sleep, stop, mic, voice, type, say, note).
+
+| plugin | |
+|---|---|
+| `web` | the panel (`:8770`): the mic/voice card (F9, Shift+8), Talk/Stop/Sleep, the Live voice, the local voice (RHVoice, Paradee), the narration knob (off · urgent · important · info), the floor and attention, the conversation (her echo, asides and ignored lines shown dimmed). A kiosk's screen on the Pi. |
+| `gpio` | a Pi's buttons and lights through `/dev/gpiochipN` (go-gpiocdev, no root): per button a press and a long-press action (default: talk / sleep, mic, voice); per light a state (awake, speaking, hearing, replying, mic, voice). |
+
+The Live API has no sleep: asleep (her goodbye, the Sleep action, or `awake_for` without a turn),
+Nina's voice session is closed; a wake or an urgent NOTE resumes it with its handle, the
+conversation's context intact (measured: after a close, "what did I ask you to turn on earlier?"
+→ "You asked me to turn on the bedroom ventilation"). A change of the Live voice takes effect by
+resuming the session with the new voice. The mic switched off closes the ears' session.
+
+Local voices (`prefs.local`): `rhvoice` for small machines; `paradee` on a desktop running
+xsel-to-speech's Paradee service (`paradee-tts.socket`, model kept loaded: 7 s of speech in
+0.13 s). Both speak her transcript sentence by sentence (first audio ~2.4 s, against ~1 s for her
+own audio).
 
 ## Run
 
 ```sh
 go build -o bin/nina-live ./cmd/nina-live
-bin/nina-live                                    # the ReSpeaker, Nina on the default output; type lines too
-bin/nina-live -script testdata/scripts/basic.txt -log runs/x.jsonl -q   # the acoustic test
-scripts/pascal-aec.sh up && bin/nina-live -dev pulse:nina_ec_source -channels 1 -ref -1 \
-    -out pulse:nina_ec_sink -person-sink "$(pactl get-default-sink)" -script testdata/scripts/basic.txt
+bin/nina-live -config testdata/config-pascal.yaml            # the panel on :8770; type lines on stdin too
+bin/nina-live -config testdata/config-pascal.yaml -q -log runs/x.jsonl -script testdata/scripts/basic.txt
+scripts/pascal-aec.sh up    # then audio.device pulse:nina_ec_source, channels 1, ref -1, out pulse:nina_ec_sink
 ```
 
 Typed lines: plain text is the person's words; `/note important …` a NOTE; `/say …` verbatim.
-
-## Spike
-
-```sh
-go build -o bin/livespike ./cmd/livespike
-bin/livespike -model gemini-3.1-flash-live-preview -sys testdata/charter-v1.txt testdata/utt/*.wav   # digital, manual activity
-bin/livespike -model gemini-3.1-flash-live-preview -sys testdata/charter-v1.txt testdata/turns-v0.txt # text turns
-bin/livespike -mic -model gemini-3.5-transcribe-live -text -tools=false testdata/utt/*.wav          # acoustic, ReSpeaker
-```
-
-The key is read from `~/.config/fsttm/gemini.key`. `testdata/utt/` are test utterances spoken by
-Paradee's `am_puck` voice.

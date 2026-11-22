@@ -65,6 +65,9 @@ func (e *Ears) Begin(seq int)    { e.cmds <- earsCmd{kind: 0, seq: seq} }
 func (e *Ears) Audio(pcm []byte) { e.cmds <- earsCmd{kind: 1, pcm: pcm} }
 func (e *Ears) End()             { e.cmds <- earsCmd{kind: 2} }
 
+// Close ends the session (the mic is off); the next utterance opens a new one.
+func (e *Ears) Close() { e.cmds <- earsCmd{kind: 3} }
+
 func (e *Ears) Start(ctx context.Context) {
 	e.cmds = make(chan earsCmd, 1024)
 	go e.loop(ctx)
@@ -185,6 +188,17 @@ func (e *Ears) loop(ctx context.Context) {
 					sess.SendRealtimeInput(genai.LiveRealtimeInput{ActivityEnd: &genai.ActivityEnd{}})
 				}
 				open, ended = false, time.Now()
+			case 3:
+				if open && !finalSent {
+					emitFinal()
+				}
+				if sess != nil {
+					gen++ // its receiver's error is not news
+					sess.Close()
+					sess = nil
+					e.Log("ears_session_closed", nil)
+				}
+				open = false
 			}
 		case t := <-texts:
 			if t.gen != gen {

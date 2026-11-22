@@ -20,13 +20,16 @@ func (f *fakeEars) End()          {}
 type fakeMind struct {
 	turns     []string
 	cancelled int
+	closed    int
 }
 
 func (f *fakeMind) Turn(_ context.Context, t string) (int, error) {
 	f.turns = append(f.turns, t)
 	return len(f.turns), nil
 }
-func (f *fakeMind) Cancel(int) { f.cancelled++ }
+func (f *fakeMind) Cancel(int)      { f.cancelled++ }
+func (f *fakeMind) Close()          { f.closed++ }
+func (f *fakeMind) Connected() bool { return f.closed == 0 }
 
 type fakeSpk struct {
 	open    bool
@@ -166,6 +169,10 @@ func TestSleep(t *testing.T) {
 	if r.e.Attn.Awake() {
 		t.Fatal("still awake")
 	}
+	r.e.awakeChanged()
+	if r.mind.closed != 1 {
+		t.Fatal("asleep, but her session stays open")
+	}
 	r.utter("turn on the lab ventilation")
 	if len(r.mind.turns) != 1 {
 		t.Fatalf("heard while asleep: %v", r.mind.turns)
@@ -202,5 +209,50 @@ func TestNovel(t *testing.T) {
 	}
 	if HeardPart("one two three four", 0.5) != "one two …" {
 		t.Fatal(HeardPart("one two three four", 0.5))
+	}
+}
+
+func TestControls(t *testing.T) {
+	r := newRig(t, Config{FollowUp: time.Second, StartAsleep: true})
+	r.e.Talk() // the button: awake, the next utterance addressed without her name
+	r.utter("turn on the lab ventilation")
+	if len(r.mind.turns) != 1 {
+		t.Fatalf("talk button: %v", r.mind.turns)
+	}
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindAudio, PCM: make([]byte, 4800)})
+	r.e.Talk() // while she speaks: stop
+	if r.spk.cuts != 1 || r.e.replying || !r.e.isFree() {
+		t.Fatalf("talk while speaking: cuts %d floor %s", r.spk.cuts, r.e.Turn.State)
+	}
+	r.e.SetKnob(Off)
+	r.e.onNote(Note{Level: Urgent, Text: "smoke"})
+	if len(r.e.pending) != 0 {
+		t.Fatal("knob off, a note queued")
+	}
+	r.e.SetSilent(true)
+	r.utter("Nina, what time is it")
+	r.reply("It's noon.")
+	if r.spk.written != 4800 || r.e.replying {
+		t.Fatalf("silent: written %d replying %v", r.spk.written, r.e.replying)
+	}
+	r.e.Sleep()
+	if r.e.Attn.Awake() || r.mind.closed != 1 {
+		t.Fatalf("sleep: awake %v closed %d", r.e.Attn.Awake(), r.mind.closed)
+	}
+}
+
+func TestReplyIntoOpenUtterance(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 10 * time.Second})
+	r.e.onVad(audio.Event{Kind: audio.Start}) // the room: an utterance opens
+	seq := r.e.seq
+	r.e.onTyped("Nina, what is the bedroom unit doing?") // she takes the floor while it is open
+	r.reply("It's still running. Anything you'd like to change?")
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: seq, Text: "It's still running. Anything you'd like to change?", Final: true})
+	if len(r.mind.turns) != 1 {
+		t.Fatalf("her echo became a turn: %v", r.mind.turns)
+	}
+	if BargeIn(Novel("the lab unit for Nina", "The lab unit is a Prana")) {
+		t.Fatal("filler and her name barged in")
 	}
 }

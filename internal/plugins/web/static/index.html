@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nina</title>
+<link rel="stylesheet" href="vendor/switch.css">
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<header>
+  <h1>Nina</h1>
+  <span id="att" class="chip" title="attention">asleep</span>
+  <span id="floor" class="chip" title="the floor (FSTTM)">FREEu</span>
+  <span id="mind" class="chip" title="her voice session">session</span>
+  <span class="grow"></span>
+  <span id="voicebar" class="fw-voicebar" role="group" aria-label="the voice"></span>
+</header>
+
+<main>
+  <section class="controls" aria-label="actions">
+    <button id="talk" class="big" title="wake her (the next thing said is for her), or stop her while she speaks">Talk</button>
+    <button id="stop" title="cut what she is saying">Stop</button>
+    <button id="sleep" title="put her to sleep: her session closes">Sleep</button>
+  </section>
+
+  <section class="settings" aria-label="preferences">
+    <label>Voice <select id="voice_name"></select></label>
+    <label>Speaker
+      <select id="local"><option value="">the Live voice</option><option value="rhvoice">RHVoice (local)</option><option value="paradee">Paradee (local socket)</option></select>
+    </label>
+    <label id="rhbox">RHVoice <select id="rhvoice"></select></label>
+    <label id="pdbox">Paradee <select id="paradee"></select></label>
+    <div class="knob" role="radiogroup" aria-label="narration: the lowest level of notes she speaks">
+      <span class="knob-label">Narration</span>
+      <span id="narration"></span>
+    </div>
+  </section>
+
+  <section id="log" class="log" aria-live="polite" aria-label="the conversation"></section>
+  <div id="interim" class="interim" aria-hidden="true"></div>
+
+  <form id="say" class="say" autocomplete="off">
+    <input id="text" placeholder="Type to Nina · /note important The bedroom is stuffy" aria-label="type to Nina">
+    <button type="submit">Send</button>
+  </form>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

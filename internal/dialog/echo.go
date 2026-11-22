@@ -48,17 +48,24 @@ func Novel(heard, said string) []string {
 	return out
 }
 
-// BargeIn decides from the novel words: two or more, or one interrupter.
+// filler words don't count towards a barge-in, nor does her name: the transcriber invents
+// both in her echo ("for Nina").
+var filler = map[string]bool{"nina": true, "a": true, "an": true, "the": true, "for": true, "to": true,
+	"and": true, "of": true, "is": true, "it": true, "in": true, "on": true, "i": true, "you": true,
+	"so": true, "uh": true, "um": true, "oh": true, "yeah": true, "that": true, "this": true, "at": true}
+
+// BargeIn decides from the novel words: two or more that are not filler, or one interrupter.
 func BargeIn(novel []string) bool {
-	if len(novel) >= 2 {
-		return true
-	}
+	n := 0
 	for _, w := range novel {
 		if interrupters[w] {
 			return true
 		}
+		if !filler[w] {
+			n++
+		}
 	}
-	return false
+	return n >= 2
 }
 
 func editAtMost1(a, b string) bool {

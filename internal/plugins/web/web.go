@@ -1,0 +1,149 @@
+// Package web is the panel plugin: Nina's preferences (mic, voice, the Live voice, the local
+// voice, the narration knob), her state (the floor, attention) and the conversation as it
+// happens, in one page: on a desktop, or a Raspberry Pi's screen in kiosk mode.
+//
+//	GET  /              the panel
+//	GET  /api/state     {prefs, status, choices}
+//	POST /api/prefs     a partial prefs object: applied and saved in the config
+//	POST /api/do        {action, arg}: talk, wake, sleep, stop, mic, voice, type, say, note
+//	GET  /api/events    the event stream (server-sent events), status included
+package web
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/ibnHatab/fsttm-live/internal/config"
+	"github.com/ibnHatab/fsttm-live/internal/plugin"
+)
+
+//go:embed static
+var static embed.FS
+
+type Web struct {
+	Addr string `yaml:"addr"`
+}
+
+func init() {
+	plugin.Register("web", func(c *config.Config) (plugin.Plugin, bool, error) {
+		w := &Web{Addr: ":8770"}
+		on, err := c.Plugin("web", w)
+		return w, on, err
+	})
+}
+
+// shown are the events the panel draws (the rest stay in the log file).
+var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply_done": true, "barge_in": true,
+	"cut": true, "echo": true, "aside": true, "asleep_ignored": true, "attention": true, "note_queued": true,
+	"note_filtered": true, "tool": true, "prefs": true, "wake": true, "sleep": true, "stop": true, "typed": true,
+	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true}
+
+func (w *Web) Run(ctx context.Context, h plugin.Host) error {
+	mux := http.NewServeMux()
+	sub, _ := fs.Sub(static, "static")
+	mux.Handle("GET /", http.FileServerFS(sub))
+	mux.HandleFunc("GET /api/state", func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, map[string]any{"prefs": h.Prefs(), "status": h.Status(), "choices": h.Choices()})
+	})
+	mux.HandleFunc("POST /api/prefs", func(rw http.ResponseWriter, r *http.Request) {
+		var patch map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// the patch is checked on a copy first: a bad one changes nothing
+		apply := func(p *config.Prefs) error {
+			b, _ := json.Marshal(p)
+			var m map[string]json.RawMessage
+			json.Unmarshal(b, &m)
+			for k, v := range patch {
+				if _, ok := m[k]; !ok {
+					return fmt.Errorf("no preference %q", k)
+				}
+				m[k] = v
+			}
+			b, _ = json.Marshal(m)
+			return json.Unmarshal(b, p)
+		}
+		trial := h.Prefs()
+		if err := apply(&trial); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		p, err := h.SetPrefs(func(p *config.Prefs) { apply(p) })
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, p)
+	})
+	mux.HandleFunc("POST /api/do", func(rw http.ResponseWriter, r *http.Request) {
+		var a struct{ Action, Arg string }
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.Do(a.Action, a.Arg); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, h.Status())
+	})
+	mux.HandleFunc("GET /api/events", func(rw http.ResponseWriter, r *http.Request) {
+		fl, ok := rw.(http.Flusher)
+		if !ok {
+			http.Error(rw, "no streaming", http.StatusInternalServerError)
+			return
+		}
+		rw.Header().Set("Content-Type", "text/event-stream")
+		rw.Header().Set("Cache-Control", "no-cache")
+		evs, cancel := h.Subscribe()
+		defer cancel()
+		tick := time.NewTicker(250 * time.Millisecond)
+		defer tick.Stop()
+		var last plugin.Status
+		send := func(kind string, v any) {
+			b, _ := json.Marshal(v)
+			fmt.Fprintf(rw, "event: %s\ndata: %s\n\n", kind, b)
+			fl.Flush()
+		}
+		send("status", h.Status())
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case e, ok := <-evs:
+				if !ok {
+					return
+				}
+				if k, _ := e["ev"].(string); shown[k] {
+					send("ev", e)
+				}
+			case <-tick.C:
+				if s := h.Status(); s != last {
+					last = s
+					send("status", s)
+				}
+			}
+		}
+	})
+	ln, err := net.Listen("tcp", w.Addr)
+	if err != nil {
+		return err
+	}
+	h.Log("web", map[string]any{"addr": ln.Addr().String()})
+	srv := &http.Server{Handler: mux}
+	go func() { <-ctx.Done(); srv.Close() }()
+	return srv.Serve(ln)
+}
+
+func writeJSON(rw http.ResponseWriter, v any) {
+	rw.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(rw).Encode(v)
+}
