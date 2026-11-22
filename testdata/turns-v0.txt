@@ -1,0 +1,6 @@
+USER: Hey Nina, turn on the lab ventilation.
+USER: Is the bedroom ventilation running?
+NARRATE (urgent): the bedroom's CO2 is 1450 ppm and rising; the rules suggest the bedroom ventilation on boost.
+NARRATE (info): the lab ventilation has been running for two hours.
+USER: Nina, why did you mention the bedroom?
+SAY EXACTLY: The kettle is ready.
