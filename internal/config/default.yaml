@@ -20,7 +20,7 @@ audio:
   max_utterance: 25s
 
 dialog:
-  follow_up: 0s                          # 0: while awake, all she hears is for her; else only this long after she spoke (the rest is an aside)
+  follow_up: 30s                         # without her name, meant for her this long after she spoke; later: an aside (0: all, while awake)
   awake_for: 2m                          # asleep (and her session closed) after this long without a turn
   start_asleep: true
   note_gap: 2s                           # a NOTE waits for the floor to be free this long
