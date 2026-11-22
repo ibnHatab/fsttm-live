@@ -21,7 +21,7 @@ audio:
 
 dialog:
   follow_up: 30s                         # without her name, meant for her this long after she spoke; later: an aside (0: all, while awake)
-  awake_for: 2m                          # asleep (and her session closed) after this long without a turn
+  awake_for: 90s                         # asleep (and her session closed) after this long without a turn
   start_asleep: true
   note_gap: 2s                           # a NOTE waits for the floor to be free this long
 
