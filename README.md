@@ -99,8 +99,9 @@ The ReSpeaker's hardware canceller is not tested yet: nothing audible is plugged
 (channel 5 carries the reference when Nina plays to `plughw:ArrayUAC10`, the raw mics stay at
 noise). With a speaker on the jack: `-out plughw:ArrayUAC10`.
 
-Open: the ReSpeaker's own AEC (a speaker on its jack); the Metis reasoning channel (tools and
-the narration port); the Raspberry Pi build (cgo for the WebRTC VAD: build on the Pi or with an
+Open: the ReSpeaker's own AEC (a speaker on its jack); urgency from Metis itself (its rules'
+narration port); who is speaking (the follow-up window takes any voice in the room: voice ID or a
+language filter); the Raspberry Pi build (cgo for the WebRTC VAD: build on the Pi or with an
 aarch64 cross compiler).
 
 ## Config, preferences, plugins
@@ -131,6 +132,22 @@ Local voices (`prefs.local`): `rhvoice` for small machines; `paradee` on a deskt
 xsel-to-speech's Paradee service (`paradee-tts.socket`, model kept loaded: 7 s of speech in
 0.13 s). Both speak her transcript sentence by sentence (first audio ~2.4 s, against ~1 s for her
 own audio).
+
+## SOURCES: Metis
+
+`sources.metis` (on by default): metis-home's tool port (127.0.0.1:8768) gives the voice session
+its tools (lights, air, media, scenes, comfort: the rules decide and answer), and the stream door
+(127.0.0.1:8766, opened by nina-live; metis-home connects) brings its REASONING. Each line is
+routed by its kind (`levels`): `context` reaches the voice session silently with her next turn
+(a "HOME" message she knows but doesn't announce), `info`/`important`/`urgent` become NOTEs for
+the floor and the narration knob; a line with its own `level` keeps it (Metis's narration port,
+when its rules quantise their conclusions). NOTEs waiting together are said in one turn; a
+filtered NOTE still becomes context. Without metis-home: a demo home.
+
+Measured against metis-home on Pascal (its simulated home): commands and refusals come from the
+rules ("the bedroom has no thermometer yet"); "we're going to bed" runs the night scene; six
+"noticed" lines became one sentence ("everything is already shut down for the night, lights and
+all"); "what did the home's rules do just now?" was answered from the silent context.
 
 ## Run
 

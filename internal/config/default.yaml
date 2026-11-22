@@ -25,6 +25,18 @@ dialog:
   start_asleep: true
   note_gap: 2s                           # a NOTE waits for the floor to be free this long
 
+# SOURCES: the systems Nina draws on. Metis (metis-home): its tools, and its REASONING through the
+# stream door (opened here). A line's kind gives its level: context (she knows it, says nothing),
+# info / important / urgent (a NOTE: spoken when the floor and the narration knob allow), drop.
+# A line carrying its own "level" (Metis's narration port) keeps it.
+sources:
+  metis:
+    enabled: true
+    tools: 127.0.0.1:8768
+    door: 127.0.0.1:8766
+    wait: 3s                             # for its tools at start; without them: a demo home
+    levels: {result: context, noticed: info, surprise: info, error: context, env: context}  # until Metis quantises them itself
+
 # Changed at run time by the plugins (the web panel, the buttons) and written back here.
 prefs:
   mic: true

@@ -2,6 +2,7 @@ package live
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,7 @@ type Voice struct {
 	goAway bool
 	nextID int
 	open   []*turnRec // sent and not yet closed, oldest first
+	ctxq   []string   // what SOURCES reported since the last turn: sent with the next one
 }
 
 type turnRec struct {
@@ -123,8 +125,15 @@ func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
 	}
 	v.nextID++
 	tc := true
-	if err := v.sess.SendClientContent(genai.LiveClientContentInput{
-		Turns: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: text}}}}, TurnComplete: &tc}); err != nil {
+	turns := []*genai.Content{}
+	if len(v.ctxq) > 0 {
+		// silent context: what the home's systems reported meanwhile, ahead of the turn
+		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "HOME (reported by the home's systems since your last turn; for you, not to announce):\n" + strings.Join(v.ctxq, "\n")}}})
+		v.Log("voice_context", map[string]any{"lines": len(v.ctxq)})
+		v.ctxq = nil
+	}
+	turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}})
+	if err := v.sess.SendClientContent(genai.LiveClientContentInput{Turns: turns, TurnComplete: &tc}); err != nil {
 		return 0, err
 	}
 	v.open = append(v.open, &turnRec{id: v.nextID})
@@ -261,4 +270,15 @@ func (v *Voice) SetVoiceName(name string) {
 	}
 	v.VoiceName = name
 	v.goAway = true
+}
+
+// Context queues a line SOURCES reported; it reaches the session with the next turn (a
+// content sent alone would leave a turn open, and one sent while she speaks would cut her).
+func (v *Voice) Context(line string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.ctxq = append(v.ctxq, line)
+	if len(v.ctxq) > 40 {
+		v.ctxq = v.ctxq[len(v.ctxq)-40:]
+	}
 }

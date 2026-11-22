@@ -27,6 +27,7 @@ import (
 	"github.com/ibnHatab/fsttm-live/internal/plugin"
 	_ "github.com/ibnHatab/fsttm-live/internal/plugins/gpio"
 	_ "github.com/ibnHatab/fsttm-live/internal/plugins/web"
+	"github.com/ibnHatab/fsttm-live/internal/sources"
 )
 
 var (
@@ -60,10 +61,32 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	home := newHome()
-	n, err := nina.New(ctx, cfg, L, nina.Tools{Decls: home.tools(), Funcs: home.funcs()})
+	// SOURCES: metis-home's tools and door when configured and up; else the demo home
+	var tools nina.Tools
+	var lines chan sources.Line
+	m := &sources.Metis{}
+	if on, err := cfg.Source("metis", m); err != nil {
+		log.Fatal(err)
+	} else if on {
+		tools.Decls, tools.Funcs = m.Tools(ctx, L.Ev)
+		lines = make(chan sources.Line, 64)
+		go func() {
+			if err := m.Door(ctx, lines, L.Ev); err != nil {
+				L.Ev("door_error", map[string]any{"err": err.Error()})
+			}
+		}()
+	}
+	if tools.Decls == nil {
+		home := newHome()
+		tools = nina.Tools{Decls: home.tools(), Funcs: home.funcs()}
+		L.Ev("demo_home", nil)
+	}
+	n, err := nina.New(ctx, cfg, L, tools)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if lines != nil {
+		go n.Sources(ctx, lines)
 	}
 	if err := plugin.Start(ctx, cfg, n); err != nil {
 		log.Fatal(err)

@@ -47,6 +47,7 @@ type Config struct {
 	} `yaml:"dialog"`
 	Prefs   Prefs                `yaml:"prefs"`
 	Plugins map[string]yaml.Node `yaml:"plugins"`
+	Sources map[string]yaml.Node `yaml:"sources"`
 
 	path string
 	doc  yaml.Node
@@ -83,7 +84,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(Default, c); err != nil {
 		return nil, fmt.Errorf("default config: %w", err)
 	}
-	c.Plugins = nil
+	c.Plugins, c.Sources = nil, nil
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -109,7 +110,16 @@ func (c *Config) Expand(p string) string {
 
 // Plugin decodes a plugin's block into v and reports whether it is enabled.
 func (c *Config) Plugin(name string, v any) (bool, error) {
-	n, ok := c.Plugins[name]
+	return block(c.Plugins, "plugins", name, v)
+}
+
+// Source decodes a source's block (sources.NAME) into v and reports whether it is enabled.
+func (c *Config) Source(name string, v any) (bool, error) {
+	return block(c.Sources, "sources", name, v)
+}
+
+func block(m map[string]yaml.Node, section, name string, v any) (bool, error) {
+	n, ok := m[name]
 	if !ok {
 		return false, nil
 	}
@@ -117,11 +127,11 @@ func (c *Config) Plugin(name string, v any) (bool, error) {
 		Enabled bool `yaml:"enabled"`
 	}
 	if err := n.Decode(&on); err != nil {
-		return false, fmt.Errorf("plugins.%s: %w", name, err)
+		return false, fmt.Errorf("%s.%s: %w", section, name, err)
 	}
 	if v != nil {
 		if err := n.Decode(v); err != nil {
-			return false, fmt.Errorf("plugins.%s: %w", name, err)
+			return false, fmt.Errorf("%s.%s: %w", section, name, err)
 		}
 	}
 	return on.Enabled, nil

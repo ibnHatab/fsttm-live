@@ -29,6 +29,7 @@ func (f *fakeMind) Turn(_ context.Context, t string) (int, error) {
 }
 func (f *fakeMind) Cancel(int)      { f.cancelled++ }
 func (f *fakeMind) Close()          { f.closed++ }
+func (f *fakeMind) Context(string)  {}
 func (f *fakeMind) Connected() bool { return f.closed == 0 }
 
 type fakeSpk struct {
@@ -254,5 +255,33 @@ func TestReplyIntoOpenUtterance(t *testing.T) {
 	}
 	if BargeIn(Novel("the lab unit for Nina", "The lab unit is a Prana")) {
 		t.Fatal("filler and her name barged in")
+	}
+}
+
+func TestEchoJoinedAndPrevious(t *testing.T) {
+	if BargeIn(Novel("Okay, good night.", "Okay, goodnight.")) {
+		t.Fatal("good night is goodnight")
+	}
+	r := newRig(t, Config{FollowUp: 10 * time.Second})
+	r.utter("Nina, what happened?")
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindSaid, Text: "I've set the lab ventilation to night mode for you."})
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindAudio, PCM: make([]byte, 4800)})
+	r.e.onVad(audio.Event{Kind: audio.Start}) // her voice, tentative
+	seq := r.e.seq
+	r.e.onTyped("Nina, what did the rules do?") // cuts her, a new reply begins with the utterance open
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: seq, Text: "I've set the lab ventilation to night mode.", Final: true})
+	if len(r.mind.turns) != 2 {
+		t.Fatalf("the cut reply's echo became a turn: %q", r.mind.turns)
+	}
+}
+
+func TestNotesTogether(t *testing.T) {
+	r := newRig(t, Config{Knob: Info})
+	r.e.onNote(Note{Level: Info, Text: "the bedroom light was already off"})
+	r.e.onNote(Note{Level: Important, Text: "the lab ventilation is in night mode"})
+	r.e.tryNote()
+	if len(r.mind.turns) != 1 || !strings.HasPrefix(r.mind.turns[0], "NOTE (important): the bedroom light") {
+		t.Fatalf("%q", r.mind.turns)
 	}
 }

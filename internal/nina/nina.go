@@ -22,6 +22,7 @@ import (
 	"github.com/ibnHatab/fsttm-live/internal/paradee"
 	"github.com/ibnHatab/fsttm-live/internal/plugin"
 	"github.com/ibnHatab/fsttm-live/internal/rhvoice"
+	"github.com/ibnHatab/fsttm-live/internal/sources"
 	"google.golang.org/genai"
 )
 
@@ -261,4 +262,24 @@ func contains(xs []string, x string) bool {
 func DefaultConfigPath() string {
 	h, _ := os.UserHomeDir()
 	return filepath.Join(h, ".config", "fsttm-live", "config.yaml")
+}
+
+// Sources routes what SOURCES report: context to the voice session (silently), the rest to
+// the floor as NOTEs (the knob and the floor decide when, and whether, she says them).
+func (n *Nina) Sources(ctx context.Context, lines <-chan sources.Line) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case l := <-lines:
+			lv, ok := dialog.ParseLevel(l.Level)
+			if !ok || lv == dialog.Off {
+				n.Mind.Context(l.Text)
+				n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": "context", "text": l.Text})
+				continue
+			}
+			n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": l.Level, "text": l.Text})
+			n.Engine.Notes <- dialog.Note{Level: lv, Text: l.Text} // filtered, it becomes context
+		}
+	}
 }

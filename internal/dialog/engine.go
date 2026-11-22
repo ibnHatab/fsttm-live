@@ -32,7 +32,8 @@ type Ears interface {
 type Mind interface {
 	Turn(ctx context.Context, text string) (int, error)
 	Cancel(turn int)
-	Close() // asleep: the Live API has no sleep, so the session is closed (it resumes on the next turn)
+	Context(line string) // silent: she knows it, with her next turn
+	Close()              // asleep: the Live API has no sleep, so the session is closed (it resumes on the next turn)
 	Connected() bool
 }
 
@@ -127,6 +128,7 @@ type Engine struct {
 	sentT     time.Time
 	firstT    time.Time
 	said      strings.Builder
+	prevSaid  string          // the reply before: a cut reply's tail may still be in the room
 	localBuf  strings.Builder // LocalVoice: text not yet spoken
 	cutNote   string
 	lastSpoke time.Time
@@ -283,7 +285,7 @@ func (e *Engine) onHeard(h live.Heard) {
 		// not saying are the person's
 		delete(e.echoOf, h.Seq)
 		if said == "" {
-			said = e.said.String()
+			said = e.said.String() + " " + e.prevSaid
 			if !BargeIn(Novel(text, said)) {
 				e.Log("echo", map[string]any{"seq": h.Seq, "text": text, "overlap": true})
 				return
@@ -302,12 +304,12 @@ func (e *Engine) onHeard(h live.Heard) {
 
 // checkBarge: words in a tentative utterance that Nina is not saying are the person's.
 func (e *Engine) checkBarge(seq int, text string) {
-	novel := Novel(text, e.said.String())
+	novel := Novel(text, e.said.String()+" "+e.prevSaid)
 	if !BargeIn(novel) {
 		return
 	}
 	delete(e.tent, seq)
-	e.echoOf[seq] = e.said.String()
+	e.echoOf[seq] = e.said.String() + " " + e.prevSaid
 	e.Log("barge_in", map[string]any{"seq": seq, "heard": text, "novel": novel, "replying": e.replying})
 	if e.replying {
 		e.cut()
@@ -396,6 +398,9 @@ func (e *Engine) beginReply() {
 	}
 	e.replying, e.mindDone, e.audioOut = true, false, false
 	e.sentT, e.firstT = time.Now(), time.Time{}
+	if s := strings.TrimSpace(e.said.String()); s != "" {
+		e.prevSaid = s
+	}
 	e.said.Reset()
 	e.localBuf.Reset()
 }
@@ -514,6 +519,7 @@ func (e *Engine) finishReply() {
 func (e *Engine) onNote(n Note) {
 	if e.cfg.Knob == Off || (n.Level < Urgent && (n.Level < e.cfg.Knob || !e.Attn.Awake())) {
 		e.Log("note_filtered", map[string]any{"level": n.Level.String(), "text": n.Text, "awake": e.Attn.Awake()})
+		e.mind.Context(n.Text) // not spoken, still known
 		return
 	}
 	e.pending = append(e.pending, n)
@@ -528,10 +534,21 @@ func (e *Engine) tryNote() {
 		return
 	}
 	n := e.pending[0]
+	for _, p := range e.pending[1:] {
+		n.Level = max(n.Level, p.Level)
+	}
 	if n.Level < Urgent && time.Since(e.freeT) < e.cfg.NoteGap {
 		return
 	}
-	e.pending = e.pending[1:]
+	// what came together is said together: one turn for all that waits
+	if len(e.pending) > 1 {
+		var ts []string
+		for _, p := range e.pending {
+			ts = append(ts, p.Text)
+		}
+		n.Text = strings.Join(ts, "\n")
+	}
+	e.pending = nil
 	if err := e.Turn.SystemAction('G'); err != nil {
 		return
 	}

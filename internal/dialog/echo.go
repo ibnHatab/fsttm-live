@@ -27,9 +27,10 @@ func Novel(heard, said string) []string {
 	for _, w := range sw {
 		known[w] = true
 	}
+	joined := strings.Join(sw, "") // "goodnight" said, "good night" heard
 	var out []string
 	for _, w := range words(heard) {
-		if known[w] {
+		if known[w] || (len([]rune(w)) >= 3 && strings.Contains(joined, w)) {
 			continue
 		}
 		near := false
