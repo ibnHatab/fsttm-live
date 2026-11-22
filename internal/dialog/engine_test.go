@@ -68,7 +68,7 @@ func (r *rig) utter(text string) {
 	r.e.onVad(audio.Event{Kind: audio.Start})
 	seq := r.e.seq
 	r.e.onHeard(live.Heard{Seq: seq, Text: text})
-	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 600 * time.Millisecond})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 600 * time.Millisecond, Pitched: 500 * time.Millisecond})
 	r.e.onHeard(live.Heard{Seq: seq, Text: text, Final: true})
 }
 
@@ -304,17 +304,34 @@ func TestAnswerOverHerTail(t *testing.T) {
 	}
 }
 
-func TestAfterEcho(t *testing.T) {
-	said := "Are you thinking about the lab or the bedroom?"
-	for h, want := range map[string]string{
-		"the bedroom? In the lab.":     "in the lab",
-		"In the lab.":                  "in the lab",
-		"about the lab or the bedroom": "",
-		"the lab":                      "",
+func TestStripEcho(t *testing.T) {
+	for _, c := range [][3]string{
+		{"the bedroom? In the lab.", "Are you thinking about the lab or the bedroom?", "in the lab"},
+		{"In the lab.", "Are you thinking about the lab or the bedroom?", "In the lab."},
+		{"about the lab or the bedroom", "Are you thinking about the lab or the bedroom?", ""},
+		{"No, just boost it.", "Would you like me to boost it, or switch it back to normal?", "No, just boost it."},
+		{"Okay, now switch to normal.", "Okay, I've boosted the lab ventilation.", "Okay, now switch to normal."},
+		{"switch it back to normal? No, just boost it.", "Would you like me to boost it, or switch it back to normal?", "no just boost it"},
+		{", I've stopped the ventilation for you.", "No problem, I've stopped the ventilation for you.", ""},
 	} {
-		if got := AfterEcho(h, said); got != want {
-			t.Errorf("AfterEcho(%q) = %q, want %q", h, got, want)
+		if got := StripEcho(c[0], c[1]); got != c[2] {
+			t.Errorf("StripEcho(%q) = %q, want %q", c[0], got, c[2])
 		}
+	}
+}
+
+func TestLateEchoAndSleepInConversation(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 30 * time.Second})
+	r.utter("Nina, please stop ventilation.")
+	r.reply("No problem, I've stopped the ventilation for you.")
+	r.utter(", I've stopped the ventilation for you.") // her echo's tail, late
+	if len(r.mind.turns) != 1 || !r.has("late_echo") {
+		t.Fatalf("late echo taken: %q", r.mind.turns)
+	}
+	r.utter("No, go to sleep.") // in the conversation, without her name
+	r.reply("Okay, call me when you need me.")
+	if r.e.Attn.Awake() {
+		t.Fatalf("still awake after go to sleep")
 	}
 }
 
@@ -323,13 +340,19 @@ func TestPhantomName(t *testing.T) {
 	say := func(text string, voiced time.Duration) {
 		r.e.onVad(audio.Event{Kind: audio.Start})
 		seq := r.e.seq
-		r.e.onVad(audio.Event{Kind: audio.End, Voiced: voiced})
+		r.e.onVad(audio.Event{Kind: audio.End, Voiced: voiced, Pitched: voiced * 8 / 10})
 		r.e.onHeard(live.Heard{Seq: seq, Text: text, Final: true})
 	}
 	say("Nina.", 120*time.Millisecond)  // a knock
 	say("Nina.", 3700*time.Millisecond) // speech it could not make out
 	if len(r.mind.turns) != 0 || r.e.Attn.Awake() || !r.has("phantom_name") {
 		t.Fatalf("a phantom name woke her: %v", r.mind.turns)
+	}
+	r.e.onVad(audio.Event{Kind: audio.Start}) // clicks: 1.4 s voiced, no pitch
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 1400 * time.Millisecond})
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Text: "Nina.", Final: true})
+	if r.e.Attn.Awake() {
+		t.Fatalf("clicks woke her")
 	}
 	say("Hey Nina.", 560*time.Millisecond)
 	if len(r.mind.turns) != 1 {

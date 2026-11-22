@@ -18,12 +18,13 @@ const (
 )
 
 type Event struct {
-	Kind   Kind
-	PCM    []byte
-	Ref    int           // mean echo-reference level over the frames (AEC active if > 0)
-	Dur    time.Duration // End: the utterance's length
-	Voiced time.Duration // End: its voiced part
-	Forced bool          // End: cut at MaxUtt
+	Kind    Kind
+	PCM     []byte
+	Ref     int           // mean echo-reference level over the frames (AEC active if > 0)
+	Dur     time.Duration // End: the utterance's length
+	Voiced  time.Duration // End: its voiced part
+	Pitched time.Duration // End: its voiced part with a voice's pitch (Pitch): a click has none
+	Forced  bool          // End: cut at MaxUtt
 }
 
 type Endpointer struct {
@@ -48,6 +49,8 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 		active  bool
 		quiet   int
 		voicedN int
+		pitchN  int
+		pitch   = NewPitch()
 		frames  int
 		refSum  int
 		pre     [][]byte
@@ -67,7 +70,8 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 			ref = refSum / frames
 		}
 		out <- Event{Kind: End, Ref: ref, Dur: time.Duration(frames) * 20 * time.Millisecond,
-			Voiced: time.Duration(voicedN) * 20 * time.Millisecond, Forced: forced}
+			Voiced:  time.Duration(voicedN) * 20 * time.Millisecond,
+			Pitched: time.Duration(pitchN) * 20 * time.Millisecond, Forced: forced}
 		active, hist = false, nil
 	}
 	for f := range in {
@@ -76,6 +80,7 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 			pcm = silence
 		}
 		voiced, _ := vad.Process(Rate, pcm)
+		pitched := pitch.Frame(pcm) // always: its window spans frames
 		hist = append(hist, voiced)
 		if len(hist) > 10 {
 			hist = hist[1:]
@@ -92,7 +97,7 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 				}
 			}
 			if n >= p.On {
-				active, quiet, voicedN, frames, refSum = true, 0, 0, len(pre), 0
+				active, quiet, voicedN, pitchN, frames, refSum = true, 0, 0, 0, len(pre), 0
 				var b []byte
 				for _, x := range pre {
 					b = append(b, x...)
@@ -108,6 +113,9 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 		if voiced {
 			quiet = 0
 			voicedN++
+			if pitched {
+				pitchN++
+			}
 		} else {
 			quiet++
 		}

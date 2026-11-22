@@ -110,22 +110,38 @@ func HeardPart(said string, frac float64) string {
 	return strings.Join(w[:n], " ") + " …"
 }
 
-// AfterEcho is what the person said at the end of an utterance that began in her voice: the
-// longest run of its first words found, in order, in what she said (her echo; a typo's
-// tolerance) is dropped. "the bedroom? In the lab." after "…the lab or the bedroom?" is "in the
-// lab"; "In the lab." keeps all of it (no run of two of her words begins it).
-func AfterEcho(heard, said string) string {
+// StripEcho is what the person said in an utterance that carries her voice too: what she said
+// comes through the mic in her order, so it is taken out only as runs of her words in that
+// order (a typo's tolerance): a leading run of two words or more (the tail of her reply the
+// utterance began in), and runs of four or more elsewhere. The person's own words stay, in
+// order, even those she used too: "No, just boost it." after "…boost it, or switch it back?"
+// is kept whole. Nothing taken out: the heard text as it was.
+func StripEcho(heard, said string) string {
 	hw, sw := words(heard), words(said)
-	best := 0
-	for i := range sw {
-		k := 0
-		for k < len(hw) && i+k < len(sw) && (hw[k] == sw[i+k] || editAtMost1(hw[k], sw[i+k])) {
-			k++
+	run := func(at int) int { // the longest run of hw from at found in sw
+		best := 0
+		for i := range sw {
+			k := 0
+			for at+k < len(hw) && i+k < len(sw) && (hw[at+k] == sw[i+k] || editAtMost1(hw[at+k], sw[i+k])) {
+				k++
+			}
+			best = max(best, k)
 		}
-		best = max(best, k)
+		return best
 	}
-	if best < 2 && best < len(hw) {
-		best = 0 // one shared word is not her voice
+	var kept []string
+	stripped := false
+	for at := 0; at < len(hw); {
+		if k := run(at); (at == 0 && k >= 2) || k >= 4 {
+			at += k
+			stripped = true
+			continue
+		}
+		kept = append(kept, hw[at])
+		at++
 	}
-	return strings.Join(hw[best:], " ")
+	if !stripped {
+		return strings.TrimSpace(heard)
+	}
+	return strings.Join(kept, " ")
 }

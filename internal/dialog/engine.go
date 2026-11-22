@@ -120,6 +120,7 @@ type Engine struct {
 	uttT    time.Time
 	outlast map[int]bool // tentative utterances that went on after her reply ended
 	voiced  map[int]time.Duration
+	pitched map[int]time.Duration
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
@@ -163,6 +164,7 @@ func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string
 		echoOf:  map[int]string{},
 		outlast: map[int]bool{},
 		voiced:  map[int]time.Duration{},
+		pitched: map[int]time.Duration{},
 		freeT:   time.Now(),
 	}
 	e.Attn.AwakeFor = cfg.AwakeFor
@@ -247,8 +249,9 @@ func (e *Engine) onVad(ev audio.Event) {
 		}
 		e.ears.End()
 		e.open, e.uttEnd = false, time.Now()
-		e.voiced[e.seq] = ev.Voiced
+		e.voiced[e.seq], e.pitched[e.seq] = ev.Voiced, ev.Pitched
 		delete(e.voiced, e.seq-20)
+		delete(e.pitched, e.seq-20)
 		if e.tent[e.seq] && !e.replying && e.cfg.Outlast > 0 && e.lastSpoke.After(e.uttT) &&
 			time.Since(e.lastSpoke) >= e.cfg.Outlast {
 			e.outlast[e.seq] = true
@@ -256,7 +259,7 @@ func (e *Engine) onVad(ev audio.Event) {
 		if !e.tent[e.seq] {
 			_ = e.Turn.UserAction('R')
 		}
-		e.Log("vad_end", map[string]any{"seq": e.seq, "dur_s": ev.Dur.Seconds(), "voiced_s": ev.Voiced.Seconds(),
+		e.Log("vad_end", map[string]any{"seq": e.seq, "dur_s": ev.Dur.Seconds(), "voiced_s": ev.Voiced.Seconds(), "pitched_s": ev.Pitched.Seconds(),
 			"forced": ev.Forced, "ref": ev.Ref, "aec_ref": ev.Ref > 0})
 	}
 }
@@ -289,7 +292,7 @@ func (e *Engine) onHeard(h live.Heard) {
 			delete(e.tent, h.Seq)
 			out := e.outlast[h.Seq]
 			delete(e.outlast, h.Seq)
-			if rest := AfterEcho(h.Text, e.said.String()+" "+e.prevSaid); out && rest != "" {
+			if rest := StripEcho(h.Text, e.said.String()+" "+e.prevSaid); out && rest != "" {
 				e.Log("outlasted", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": rest})
 				if !e.phantomName(h.Seq, rest) {
 					e.dispatch(rest, false)
@@ -314,12 +317,17 @@ func (e *Engine) onHeard(h live.Heard) {
 				return
 			}
 		}
-		if novel := Novel(text, said); len(novel) < len(words(text)) {
-			text = strings.Join(novel, " ") // keep the person's own wording when none of it was echo
-		}
+		text = StripEcho(text, said)
 		e.Log("echo_stripped", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": text})
 	}
 	if strings.TrimSpace(text) == "" || e.phantomName(h.Seq, text) {
+		return
+	}
+	if !e.replying && !e.lastSpoke.IsZero() && time.Since(e.lastSpoke) < lateEcho && len(words(text)) >= 3 &&
+		StripEcho(text, e.said.String()+" "+e.prevSaid) == "" {
+		// her reply's words, in her order, just after it: its echo, cut into the next utterance
+		// by the transcriber (its text arrives late; this utterance's own sound was a click)
+		e.Log("late_echo", map[string]any{"seq": h.Seq, "text": text})
 		return
 	}
 	e.dispatch(text, false)
@@ -327,7 +335,7 @@ func (e *Engine) onHeard(h live.Heard) {
 
 // phantomName: her name alone ("Nina.", "Hey Nina.") from a sound too short or too long to be
 // someone saying it. The transcriber's vocabulary bias writes "Nina" for a knock, a cough or
-// speech it can't make out; a spoken name has 0.3–0.7 s of voice.
+// speech it can't make out; a spoken name has 0.3–0.7 s of voice, most of it with a pitch.
 func (e *Engine) phantomName(seq int, text string) bool {
 	var rest []string
 	for _, w := range words(text) {
@@ -342,14 +350,20 @@ func (e *Engine) phantomName(seq int, text string) bool {
 		return false
 	}
 	v, ok := e.voiced[seq]
-	if !ok || (v >= minNameVoiced && v <= maxNameVoiced) {
+	pv := e.pitched[seq]
+	if !ok || (v >= minNameVoiced && v <= maxNameVoiced && pv >= minNamePitched) {
 		return false
 	}
-	e.Log("phantom_name", map[string]any{"seq": seq, "text": text, "voiced_s": v.Seconds()})
+	e.Log("phantom_name", map[string]any{"seq": seq, "text": text, "voiced_s": v.Seconds(), "pitched_s": pv.Seconds()})
 	return true
 }
 
+const lateEcho = 10 * time.Second
+
 const minNameVoiced, maxNameVoiced = 250 * time.Millisecond, 2 * time.Second
+
+// a spoken "Nina" is voiced throughout (n-i-n-a): ~0.4 s with a pitch; clicks have none
+const minNamePitched = 150 * time.Millisecond
 
 var greeting = map[string]bool{"hey": true, "hi": true, "hello": true, "ok": true, "okay": true, "oh": true}
 
@@ -413,7 +427,13 @@ func (e *Engine) dispatch(text string, typed bool) {
 		e.Log("aside", map[string]any{"text": text, "since_spoke_s": time.Since(e.lastSpoke).Seconds()})
 		return
 	}
-	e.Attn.OnUtterance(text) // a sleep phrase with her name puts her to sleep after this reply
+	// a sleep phrase meant for her ("go to sleep" with her name, or in the conversation) puts
+	// her to sleep after this reply; attention takes it only with the name, so it is given
+	if !named {
+		e.Attn.OnUtterance("nina " + text)
+	} else {
+		e.Attn.OnUtterance(text)
+	}
 	e.awakeChanged()
 	e.send(text)
 }
