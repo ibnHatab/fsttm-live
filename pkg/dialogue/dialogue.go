@@ -139,8 +139,33 @@ func (n *Dialogue) Run(ctx context.Context) error {
 	frames := make(chan audio.Frame, 64)
 	n.capt = &audio.Capture{Device: a.Device, Channels: a.Channels, Speech: a.Speech, Ref: a.Ref}
 	go func() {
-		if err := n.capt.Run(frames); err != nil && ctx.Err() == nil {
-			n.Ev.Ev("capture_error", map[string]any{"err": err.Error()})
+		// the microphone again whenever it goes (the ReSpeaker unplugged, the device busy at a
+		// restart): a failure is logged once per kind, retried with a backoff to 30 s
+		wait, last := 2*time.Second, ""
+		for ctx.Err() == nil {
+			t0 := time.Now()
+			err := n.capt.Run(frames)
+			if ctx.Err() != nil {
+				break
+			}
+			msg := "the capture ended"
+			if err != nil {
+				msg = err.Error()
+			}
+			if msg != last {
+				n.Ev.Ev("capture_error", map[string]any{"err": msg, "retry_s": wait.Seconds()})
+				last = msg
+			}
+			if time.Since(t0) > time.Minute {
+				wait, last = 2*time.Second, ""
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(wait):
+			}
+			if wait *= 2; wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
 		}
 		close(frames)
 	}()
