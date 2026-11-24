@@ -17,6 +17,10 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ibnHatab/fsttm-live/internal/config"
@@ -32,7 +36,16 @@ type Web struct {
 	// dashboard, http://homeassistant.local:8123: its Nina card reads the state and the events and
 	// sets the prefs); "" none, "*" any
 	AllowOrigin []string `yaml:"allow_origin"`
+	// Static: more files served, URL prefix → directory (acasa's ha-ui www/nina at /nina/: Nina's
+	// own screen, her card and personas, up before Home Assistant is)
+	Static map[string]string `yaml:"static"`
+
+	mu    sync.Mutex
+	facts map[string]map[string]any // the last event of each sticky kind (persona), for /api/state
 }
+
+// sticky are the event kinds whose last one a page loading now needs (Nina's persona).
+var sticky = map[string]bool{"persona": true}
 
 // cors lets the allowed origins' pages call the API (a preflight answered here).
 func (w *Web) cors(next http.Handler) http.Handler {
@@ -68,14 +81,51 @@ func init() {
 var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply_done": true, "barge_in": true,
 	"cut": true, "echo": true, "aside": true, "asleep_ignored": true, "attention": true, "note_queued": true,
 	"note_filtered": true, "tool": true, "prefs": true, "wake": true, "sleep": true, "stop": true, "typed": true,
-	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true}
+	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true,
+	"persona": true, "ui": true}
 
 func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServerFS(sub))
+	for prefix, dir := range w.Static {
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		if strings.HasPrefix(dir, "~/") {
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, dir[2:])
+		}
+		mux.Handle("GET "+prefix, http.StripPrefix(prefix, http.FileServer(http.Dir(dir))))
+	}
+	w.facts = map[string]map[string]any{}
+	evs0, cancel0 := h.Subscribe() // the sticky kinds' last events
+	go func() {
+		defer cancel0()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e, ok := <-evs0:
+				if !ok {
+					return
+				}
+				if k, _ := e["ev"].(string); sticky[k] {
+					w.mu.Lock()
+					w.facts[k] = e
+					w.mu.Unlock()
+				}
+			}
+		}
+	}()
 	mux.HandleFunc("GET /api/state", func(rw http.ResponseWriter, r *http.Request) {
-		writeJSON(rw, map[string]any{"prefs": h.Prefs(), "status": h.Status(), "choices": h.Choices()})
+		w.mu.Lock()
+		facts := map[string]any{}
+		for k, v := range w.facts {
+			facts[k] = v
+		}
+		w.mu.Unlock()
+		writeJSON(rw, map[string]any{"prefs": h.Prefs(), "status": h.Status(), "choices": h.Choices(), "facts": facts})
 	})
 	mux.HandleFunc("POST /api/prefs", func(rw http.ResponseWriter, r *http.Request) {
 		var patch map[string]json.RawMessage

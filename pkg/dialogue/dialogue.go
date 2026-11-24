@@ -261,6 +261,8 @@ func (n *Dialogue) Do(action, arg string) error {
 			}
 		})
 		return err
+	case "ui": // the screen's mode (nina: her own; ha: Home Assistant's full interface), to the pages
+		n.Log("ui", map[string]any{"mode": arg})
 	case "type":
 		e.Do(func(e *dialog.Engine) { e.TypeLine(arg) })
 	case "say":
