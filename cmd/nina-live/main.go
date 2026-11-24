@@ -23,11 +23,11 @@ import (
 
 	"github.com/ibnHatab/fsttm-live/internal/config"
 	"github.com/ibnHatab/fsttm-live/internal/evlog"
-	"github.com/ibnHatab/fsttm-live/internal/nina"
 	"github.com/ibnHatab/fsttm-live/internal/plugin"
 	_ "github.com/ibnHatab/fsttm-live/internal/plugins/gpio"
 	_ "github.com/ibnHatab/fsttm-live/internal/plugins/web"
 	"github.com/ibnHatab/fsttm-live/internal/sources"
+	nina "github.com/ibnHatab/fsttm-live/pkg/dialogue"
 )
 
 var (
@@ -86,7 +86,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if lines != nil {
-		go n.Sources(ctx, lines)
+		go routeSources(ctx, n, lines)
 	}
 	if err := plugin.Start(ctx, cfg, n); err != nil {
 		log.Fatal(err)
@@ -109,5 +109,23 @@ func main() {
 	}
 	if err := n.Run(ctx); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// routeSources routes what SOURCES report: context to the voice session (silently), the rest to
+// the floor as NOTEs (the knob and the floor decide when, and whether, she says them).
+func routeSources(ctx context.Context, n *nina.Dialogue, lines <-chan sources.Line) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case l := <-lines:
+			if l.Level == "" || l.Level == "context" || n.Note(l.Level, l.Text) != nil {
+				n.Context(l.Key, l.Text)
+				n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": "context", "text": l.Text})
+				continue
+			}
+			n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": l.Level, "text": l.Text})
+		}
 	}
 }

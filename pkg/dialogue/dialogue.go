@@ -1,12 +1,21 @@
-// Package nina is the runtime: everything built from the config (the mic, the endpointer, the
-// two Live sessions, the speaker, the floor), the preferences applied and saved, and the Host
-// the plugins see.
-package nina
+// Package dialogue is how Nina talks, as a library: everything built from the config (the mic,
+// the endpointer, the local wake word, the two Live sessions, the speaker, the floor), the
+// preferences applied, and the Host the plugins see. fsttm-live's own cmd/nina-live is one
+// program on it; nina-live (the agent) embeds it as her voice channel.
+//
+//	cfg, _ := dialogue.LoadConfig(path)
+//	d, _ := dialogue.New(ctx, cfg, dialogue.NewEvents(w), dialogue.Tools{Decls: ..., Funcs: ...})
+//	d.SavePrefs = myStore            // where a preferences change goes (default: the config file)
+//	go d.Run(ctx)
+//	d.Context(key, line)             // silent context for the voice session (a newer line replaces the older)
+//	d.Note("important", text)        // a NOTE to the floor: said when the floor is free and the knob allows
+//	ch, stop := d.Subscribe()        // the dialogue's events (heard, turn, said, cut, attention, …)
+package dialogue
 
 import (
 	"context"
 	"fmt"
-	"github.com/ibnHatab/fsttm-live/internal/kws"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,11 +28,11 @@ import (
 	"github.com/ibnHatab/fsttm-live/internal/config"
 	"github.com/ibnHatab/fsttm-live/internal/dialog"
 	"github.com/ibnHatab/fsttm-live/internal/evlog"
+	"github.com/ibnHatab/fsttm-live/internal/kws"
 	"github.com/ibnHatab/fsttm-live/internal/live"
 	"github.com/ibnHatab/fsttm-live/internal/paradee"
 	"github.com/ibnHatab/fsttm-live/internal/plugin"
 	"github.com/ibnHatab/fsttm-live/internal/rhvoice"
-	"github.com/ibnHatab/fsttm-live/internal/sources"
 	"google.golang.org/genai"
 )
 
@@ -39,7 +48,24 @@ type Tools struct {
 	Funcs map[string]live.ToolFunc
 }
 
-type Nina struct {
+// Config is the dialogue's configuration (audio, models, dialog, prefs, plugins); Prefs the
+// person's preferences in it.
+type (
+	Config = config.Config
+	Prefs  = config.Prefs
+	Events = evlog.Log
+)
+
+// LoadConfig reads a config file (the defaults, overridden by the file).
+func LoadConfig(path string) (*Config, error) { return config.Load(path) }
+
+// NewEvents is the dialogue's event log over writers (JSONL lines), with subscribers.
+func NewEvents(w ...io.Writer) *Events { return evlog.New(w...) }
+
+type Dialogue struct {
+	// SavePrefs keeps a preferences change (default: written back to the config file)
+	SavePrefs func(Prefs) error
+
 	Cfg    *config.Config
 	Ev     *evlog.Log
 	Engine *dialog.Engine
@@ -52,7 +78,7 @@ type Nina struct {
 	capt  *audio.Capture
 }
 
-func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (*Nina, error) {
+func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (*Dialogue, error) {
 	client, err := live.NewClient(ctx, cfg.Expand(cfg.Key))
 	if err != nil {
 		return nil, err
@@ -61,7 +87,7 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	if err != nil {
 		return nil, err
 	}
-	n := &Nina{Cfg: cfg, Ev: log, prefs: cfg.Prefs}
+	n := &Dialogue{Cfg: cfg, Ev: log, prefs: cfg.Prefs, SavePrefs: cfg.SavePrefs}
 	n.Mind = &live.Voice{Client: client, Model: cfg.Models.Mind, VoiceName: cfg.Prefs.VoiceName, System: string(sys),
 		Tools: tools.Decls, Funcs: tools.Funcs, Compress: 24000, Log: log.Ev}
 	n.Ears = &live.Ears{Client: client, Model: cfg.Models.Ears, Vocab: cfg.Models.Vocab,
@@ -101,7 +127,7 @@ func localVoice(p config.Prefs) dialog.TTS {
 }
 
 // Run starts the sound and the sessions and runs the dialog until ctx ends.
-func (n *Nina) Run(ctx context.Context) error {
+func (n *Dialogue) Run(ctx context.Context) error {
 	n.Ears.Start(ctx)
 	if err := n.Mind.Connect(ctx); err != nil {
 		return err
@@ -126,10 +152,10 @@ func (n *Nina) Run(ctx context.Context) error {
 
 // ---- plugin.Host -----------------------------------------------------------------------
 
-func (n *Nina) Prefs() config.Prefs { n.mu.Lock(); defer n.mu.Unlock(); return n.prefs }
+func (n *Dialogue) Prefs() config.Prefs { n.mu.Lock(); defer n.mu.Unlock(); return n.prefs }
 
 // SetPrefs applies a change (checked first) and writes it to the config.
-func (n *Nina) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
+func (n *Dialogue) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	old, p := n.prefs, n.prefs
@@ -164,24 +190,24 @@ func (n *Nina) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 		e.SetLocal(tts)
 	}
 	n.Ev.Ev("prefs", map[string]any{"prefs": p})
-	if err := n.Cfg.SavePrefs(p); err != nil {
+	if err := n.SavePrefs(p); err != nil {
 		n.Ev.Ev("prefs_save_error", map[string]any{"err": err.Error()})
 		return p, err
 	}
 	return p, nil
 }
 
-func (n *Nina) Status() plugin.Status {
+func (n *Dialogue) Status() plugin.Status {
 	s := n.Engine.Status()
 	return plugin.Status{Floor: s.Floor, Awake: s.Awake, Hearing: s.Hearing, Replying: s.Replying,
 		Speaking: s.Speaking, Mind: s.Mind, Pending: s.Pending}
 }
 
-func (n *Nina) Subscribe() (<-chan map[string]any, func()) { return n.Ev.Subscribe() }
+func (n *Dialogue) Subscribe() (<-chan map[string]any, func()) { return n.Ev.Subscribe() }
 
-func (n *Nina) Log(kind string, f map[string]any) { n.Ev.Ev(kind, f) }
+func (n *Dialogue) Log(kind string, f map[string]any) { n.Ev.Ev(kind, f) }
 
-func (n *Nina) Do(action, arg string) error {
+func (n *Dialogue) Do(action, arg string) error {
 	e := n.Engine
 	switch action {
 	case "talk":
@@ -235,7 +261,7 @@ func onOff(arg string, cur bool) (bool, error) {
 	return false, fmt.Errorf("%q: on or off", arg)
 }
 
-func (n *Nina) Choices() map[string][]string {
+func (n *Dialogue) Choices() map[string][]string {
 	rh := []string{}
 	if ds, err := os.ReadDir("/usr/share/RHVoice/voices"); err == nil {
 		for _, d := range ds {
@@ -267,24 +293,19 @@ func DefaultConfigPath() string {
 	return filepath.Join(h, ".config", "fsttm-live", "config.yaml")
 }
 
-// Sources routes what SOURCES report: context to the voice session (silently), the rest to
-// the floor as NOTEs (the knob and the floor decide when, and whether, she says them).
-func (n *Nina) Sources(ctx context.Context, lines <-chan sources.Line) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case l := <-lines:
-			lv, ok := dialog.ParseLevel(l.Level)
-			if !ok || lv == dialog.Off {
-				n.Mind.ContextKey(l.Key, l.Text)
-				n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": "context", "text": l.Text})
-				continue
-			}
-			n.Ev.Ev("source", map[string]any{"kind": l.Kind, "level": l.Level, "text": l.Text})
-			n.Engine.Notes <- dialog.Note{Level: lv, Text: l.Text} // filtered, it becomes context
-		}
+// Context is silent context for the voice session: she knows it and says nothing; a newer line
+// with the same key replaces the older.
+func (n *Dialogue) Context(key, line string) { n.Mind.ContextKey(key, line) }
+
+// Note is a NOTE to the floor at a level (info, important, urgent): said when the floor is free
+// and the narration knob lets it through; filtered, it becomes context.
+func (n *Dialogue) Note(level, text string) error {
+	lv, ok := dialog.ParseLevel(level)
+	if !ok || lv == dialog.Off || text == "" {
+		return fmt.Errorf("note: level info, important or urgent, and a text")
 	}
+	n.Engine.Notes <- dialog.Note{Level: lv, Text: text}
+	return nil
 }
 
 // spotter loads the local wake word unless the mode is the cloud's; a model that does not load
@@ -302,3 +323,7 @@ func spotter(cfg *config.Config, ev func(string, map[string]any)) dialog.Spotter
 	ev("kws_ready", map[string]any{"mode": w.Mode})
 	return k
 }
+
+// StartPlugins starts the plugins the config enables (the web panel, the buttons), on this
+// dialogue as their host.
+func (n *Dialogue) StartPlugins(ctx context.Context) error { return plugin.Start(ctx, n.Cfg, n) }
