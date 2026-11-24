@@ -28,6 +28,32 @@ var static embed.FS
 
 type Web struct {
 	Addr string `yaml:"addr"`
+	// AllowOrigin: the pages of these origins may use the API from their own (Home Assistant's
+	// dashboard, http://homeassistant.local:8123: its Nina card reads the state and the events and
+	// sets the prefs); "" none, "*" any
+	AllowOrigin []string `yaml:"allow_origin"`
+}
+
+// cors lets the allowed origins' pages call the API (a preflight answered here).
+func (w *Web) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if o := r.Header.Get("Origin"); o != "" {
+			for _, a := range w.AllowOrigin {
+				if a == "*" || a == o {
+					rw.Header().Set("Access-Control-Allow-Origin", o)
+					rw.Header().Set("Vary", "Origin")
+					rw.Header().Set("Access-Control-Allow-Methods", "GET, POST")
+					rw.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+					break
+				}
+			}
+			if r.Method == http.MethodOptions {
+				rw.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(rw, r)
+	})
 }
 
 func init() {
@@ -138,7 +164,7 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 		return err
 	}
 	h.Log("web", map[string]any{"addr": ln.Addr().String()})
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: w.cors(mux)}
 	go func() { <-ctx.Done(); srv.Close() }()
 	return srv.Serve(ln)
 }
