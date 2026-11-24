@@ -42,6 +42,9 @@ var LiveVoices = []string{"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "
 	"Enceladus", "Erinome", "Gacrux", "Iapetus", "Laomedeia", "Pulcherrima", "Rasalgethi",
 	"Sadachbia", "Sadaltager", "Schedar", "Sulafat", "Umbriel", "Vindemiatrix", "Zubenelgenubi"}
 
+// ToolFunc runs one of the voice session's tools: its arguments in, its result out.
+type ToolFunc = live.ToolFunc
+
 // Tools is what SOURCES offer the voice session (declarations and their functions).
 type Tools struct {
 	Decls []*genai.Tool
