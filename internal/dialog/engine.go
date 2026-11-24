@@ -722,6 +722,7 @@ func (e *Engine) onTyped(t string) {
 		}
 		e.onNote(Note{Level: lv, Text: f[2]})
 	case strings.HasPrefix(t, "/say "):
+		e.Wake() // her narration: the person may answer it, by voice
 		e.send("SAY: " + strings.TrimPrefix(t, "/say "))
 	default:
 		if e.replying {
@@ -733,6 +734,7 @@ func (e *Engine) onTyped(t string) {
 		_ = e.Turn.UserAction('R')
 		e.uttEnd = time.Now()
 		e.Log("typed", map[string]any{"text": t})
+		e.Wake() // typing to her is talking to her (the user, 2026-11-24): awake for the follow-up, by voice too
 		e.dispatch(t, true)
 	}
 }
