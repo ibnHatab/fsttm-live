@@ -61,6 +61,10 @@ github.com/k2-fsa/sherpa-onnx-go v1.13.6 h1:JKFYKAJ0npw+NfolETOoN2Psbma60g6laQGX
 github.com/k2-fsa/sherpa-onnx-go v1.13.6/go.mod h1:KBDGSAIEljGnYGKZdE+BAuMJqfEMpY53SeiD8N++M48=
 github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6 h1:CupI5dGvUgjGueu2Ju701qSAnn1+i+F0zkzGA74lttM=
 github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6/go.mod h1:NXEH2rsBgTdqY59YpPq6CtSBlBAXy/8a9FmpLERU97I=
+github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6 h1:RomjkUOYDsYawgRDSbf0TsK7IKApQqfrsnXAJUe5omw=
+github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6/go.mod h1:ZOhUAXC62Unj0ZNfu6zxSFKcW96aXf7P3BsqiUyOBbE=
+github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6 h1:iERze3L0ysXctzsn+p4Uhuj5NbqybKa78U5UTTxbs6g=
+github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6/go.mod h1:5AX7TU8+P/gInjglY1ijtWUM2b8iyR0QX4yEngzMe64=
 github.com/maxhawkins/go-webrtcvad v0.0.0-20210121163624-be60036f3083 h1:0JDcvP4R28p6+u8VIHCwYx7UwiHZ074INz3C397oc9s=
 github.com/maxhawkins/go-webrtcvad v0.0.0-20210121163624-be60036f3083/go.mod h1:YdrZ05xnooeP54y7m+/UvI23O1Td46PjWkLJu1VLObM=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=

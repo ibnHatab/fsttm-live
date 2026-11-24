@@ -35,7 +35,7 @@ func (l *list) Set(s string) error { *l = append(*l, s); return nil }
 
 func main() {
 	dev := flag.String("dev", "/dev/serial0", "the radar's UART")
-	baud := flag.String("baud", "256000", "its speed")
+	baud := flag.Int("baud", 256000, "its speed")
 	token := flag.String("token", "~/.config/fsttm/hass.token", "Home Assistant's token file")
 	entity := flag.String("entity", "sensor.nina_viewer", "the entity published")
 	off := flag.Duration("off", 60*time.Second, "nobody this long: the screen's black overlay")
@@ -58,10 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if out, err := exec.Command("stty", "-F", *dev, *baud, "raw", "-echo").CombinedOutput(); err != nil {
-		log.Fatalf("stty %s: %v %s", *dev, err, out)
-	}
-	port, err := os.Open(*dev)
+	port, err := ld2410.Open(*dev, *baud)
 	if err != nil {
 		log.Fatal(err)
 	}

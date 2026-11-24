@@ -6,13 +6,15 @@ require google.golang.org/genai v1.79.1
 
 require (
 	github.com/ibnHatab/fsttm/go v0.0.0-20261122153613-e28e1af02c58
+	github.com/k2-fsa/sherpa-onnx-go v1.13.6
 	github.com/warthog618/go-gpiocdev v0.10.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/k2-fsa/sherpa-onnx-go v1.13.6 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6 // indirect
 )
 
 require (
@@ -28,7 +30,7 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.43.0
 	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/grpc v1.82.1 // indirect
