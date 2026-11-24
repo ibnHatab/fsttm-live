@@ -93,8 +93,13 @@ func main() {
 			now := time.Now()
 			mu.Lock()
 			s, changed := tr.Update(f, now)
+			first := lastFrame.IsZero()
 			st, lastFrame = s, now
 			mu.Unlock()
+			if first { // the radar speaks: say so, and publish where things stand
+				log.Printf("frames from %s (target %d, nearest %d cm)", *dev, f.Target, f.Nearest())
+				changed = true
+			}
 			if changed {
 				log.Printf("%s %.2f m %s near=%v reach=%v", map[bool]string{true: "present", false: "absent"}[s.Present], s.Distance, s.Trend, s.Near, s.InReach)
 				go publish(s)
