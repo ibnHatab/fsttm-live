@@ -45,7 +45,7 @@ type Web struct {
 }
 
 // sticky are the event kinds whose last one a page loading now needs (Nina's persona).
-var sticky = map[string]bool{"persona": true}
+var sticky = map[string]bool{"persona": true, "surprises": true}
 
 // cors lets the allowed origins' pages call the API (a preflight answered here).
 func (w *Web) cors(next http.Handler) http.Handler {
@@ -82,7 +82,7 @@ var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply
 	"cut": true, "echo": true, "aside": true, "asleep_ignored": true, "attention": true, "note_queued": true,
 	"note_filtered": true, "tool": true, "prefs": true, "wake": true, "sleep": true, "stop": true, "typed": true,
 	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true,
-	"persona": true, "ui": true}
+	"persona": true, "ui": true, "surprises": true}
 
 func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux := http.NewServeMux()
