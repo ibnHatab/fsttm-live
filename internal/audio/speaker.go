@@ -1,7 +1,9 @@
 package audio
 
 import (
+	"encoding/binary"
 	"io"
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -18,8 +20,27 @@ type Speaker struct {
 	Rate   int
 	Done   chan bool // one per reply: true played to the end, false cut or failed
 
-	mu  sync.Mutex
-	cur *reply
+	mu   sync.Mutex
+	cur  *reply
+	gain float64 // 0: 1 (as recorded); SetGain
+}
+
+// SetGain scales her voice from the next chunk on (the person's distance, from the panel's
+// radar: closer, quieter). 1 is as recorded; clipped to [0.2, 2].
+func (s *Speaker) SetGain(g float64) {
+	s.mu.Lock()
+	s.gain = math.Max(0.2, math.Min(2, g))
+	s.mu.Unlock()
+}
+
+// scale is pcm (s16le) at the gain, a copy.
+func scale(pcm []byte, g float64) []byte {
+	out := make([]byte, len(pcm)&^1)
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := float64(int16(binary.LittleEndian.Uint16(pcm[i:]))) * g
+		binary.LittleEndian.PutUint16(out[i:], uint16(int16(math.Max(-32768, math.Min(32767, v)))))
+	}
+	return out
 }
 
 type reply struct {
@@ -83,6 +104,9 @@ func (s *Speaker) Write(pcm []byte) {
 		return
 	}
 	s.cur.written += len(pcm)
+	if s.gain != 0 && s.gain != 1 {
+		pcm = scale(pcm, s.gain)
+	}
 	select {
 	case s.cur.q <- pcm:
 	default: // longer than the queue: drop rather than block the dialog

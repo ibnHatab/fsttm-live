@@ -74,6 +74,7 @@ type Dialogue struct {
 	Engine *dialog.Engine
 	Mind   *live.Voice
 	Ears   *live.Ears
+	spk    *audio.Speaker
 
 	mu    sync.Mutex
 	prefs config.Prefs
@@ -96,6 +97,7 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	n.Ears = &live.Ears{Client: client, Model: cfg.Models.Ears, Vocab: cfg.Models.Vocab,
 		Settle: 200 * time.Millisecond, FinalWait: 1500 * time.Millisecond, MaxAge: 8 * time.Minute, Log: log.Ev}
 	spk := audio.NewSpeaker(cfg.Audio.Out, 24000)
+	n.spk = spk
 	knob, ok := dialog.ParseLevel(cfg.Prefs.Narration)
 	if !ok {
 		return nil, fmt.Errorf("prefs.narration: %q", cfg.Prefs.Narration)
@@ -324,6 +326,9 @@ func DefaultConfigPath() string {
 // Context is silent context for the voice session: she knows it and says nothing; a newer line
 // with the same key replaces the older.
 func (n *Dialogue) Context(key, line string) { n.Mind.ContextKey(key, line) }
+
+// SetGain sets her voice's loudness (1: as recorded), e.g. from the person's distance.
+func (n *Dialogue) SetGain(g float64) { n.spk.SetGain(g) }
 
 // Note is a NOTE to the floor at a level (info, important, urgent): said when the floor is free
 // and the narration knob lets it through; filtered, it becomes context.
