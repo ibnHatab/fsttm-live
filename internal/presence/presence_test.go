@@ -22,7 +22,7 @@ func TestTracker(t *testing.T) {
 		t.Fatalf("not present after Confirm: %+v", st)
 	}
 	ms := 600
-	for cm := uint16(300); cm >= 120; cm -= 15 { // walking up to the screen, 10 frames a second
+	for cm := uint16(300); cm >= 120; cm -= 5 { // walking up to the screen at 0.5 m/s, 10 frames a second
 		ms += 100
 		st, _ = tr.Update(seen(cm), at(ms))
 	}
