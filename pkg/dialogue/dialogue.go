@@ -364,6 +364,33 @@ func (n *Dialogue) Loudness() float64 {
 	return n.spk.Level + 20*math.Log10(n.spk.Radius())
 }
 
+// Volume is her voice's level at the knob (the bubble's edge), dBFS RMS on the speakers' feed;
+// 0 uncalibrated. The music follows it (the one knob).
+func (n *Dialogue) Volume() float64 {
+	if n.spk.Level == 0 {
+		return 0
+	}
+	b := n.Prefs().Bubble
+	if b <= 0 {
+		b = 1
+	}
+	return n.spk.Level + 20*math.Log10(b)
+}
+
+// Knob moves the one sound knob a step (+1 louder, -1 quieter: the bubble times or over the
+// square root of 2, 3 dB), within 0.5 to MaxBubble metres; her voice and the music follow.
+func (n *Dialogue) Knob(step int) error {
+	_, err := n.SetPrefs(func(p *config.Prefs) {
+		b := p.Bubble
+		if b <= 0 {
+			b = 1
+		}
+		b *= math.Pow(math.Sqrt2, float64(step))
+		p.Bubble = math.Round(math.Max(0.5, math.Min(audio.MaxBubble, b))*100) / 100
+	})
+	return err
+}
+
 // Calibrated: her loudness is the calibrated level's (audio.level), the bubble and the reach.
 func (n *Dialogue) Calibrated() bool { return n.spk.Level != 0 }
 
