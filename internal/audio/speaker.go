@@ -20,17 +20,73 @@ type Speaker struct {
 	Rate   int
 	Done   chan bool // one per reply: true played to the end, false cut or failed
 
-	mu   sync.Mutex
-	cur  *reply
-	gain float64 // 0: 1 (as recorded); SetGain
+	// Level is her speech's loudness out, in dBFS RMS, for a bubble of 1 m: the acoustic
+	// calibration's minimum (scripts/calib: as loud at the microphones as a person talking near
+	// them). 0: no normalising, her voice as recorded (times SetGain).
+	Level float64
+
+	mu     sync.Mutex
+	cur    *reply
+	gain   float64 // 0: 1 (as recorded); SetGain
+	bubble float64 // metres her voice is meant to reach (0: 1); SetBubble
+	reach  float64 // the person's distance (0: unknown); SetReach
+	est    float64 // her stream's speech level, dBFS RMS (a running estimate)
 }
 
-// SetGain scales her voice from the next chunk on (the person's distance, from the panel's
-// radar: closer, quieter). 1 is as recorded; clipped to [0.2, 2].
+// MaxBubble is the widest bubble the calibration allows: +12 dB over the minimum, her echo still
+// under the person's voice on the processed channel (wider: her echo opens utterances).
+const MaxBubble = 4.0
+
+// SetGain scales her voice from the next chunk on. 1 is as recorded; clipped to [0.2, 2].
 func (s *Speaker) SetGain(g float64) {
 	s.mu.Lock()
 	s.gain = math.Max(0.2, math.Min(2, g))
 	s.mu.Unlock()
+}
+
+// SetBubble is how far her voice carries, in metres (the person's knob): 1 is the calibrated
+// minimum, each doubling 6 dB louder; [0.5, MaxBubble].
+func (s *Speaker) SetBubble(m float64) {
+	s.mu.Lock()
+	s.bubble = math.Max(0.5, math.Min(MaxBubble, m))
+	s.mu.Unlock()
+}
+
+// SetReach is the person's distance (the radar): she speaks to reach them, never past the
+// bubble. 0: unknown (the bubble's edge).
+func (s *Speaker) SetReach(m float64) { s.mu.Lock(); s.reach = m; s.mu.Unlock() }
+
+// Radius is where her voice is aimed now: the person, within the bubble.
+func (s *Speaker) Radius() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.radius()
+}
+
+func (s *Speaker) radius() float64 {
+	b := s.bubble
+	if b == 0 {
+		b = 1
+	}
+	if s.reach > 0 {
+		return math.Max(0.5, math.Min(b, s.reach))
+	}
+	return b
+}
+
+// level: the gain that brings a chunk of her stream to Level at the radius. The stream's own
+// level is learnt from its voiced chunks (a slow average, kept across replies: one reply's start
+// is not louder than its end).
+func (s *Speaker) level(pcm []byte) float64 {
+	if s.est == 0 {
+		s.est = -20 // what the Live voice gives, about, before the first measure
+	}
+	if r := RMS(pcm); r > 0 {
+		if d := 20 * math.Log10(float64(r)/32768); d > -50 {
+			s.est += (d - s.est) * 0.05
+		}
+	}
+	return math.Pow(10, (s.Level-s.est+20*math.Log10(s.radius()))/20)
 }
 
 // scale is pcm (s16le) at the gain, a copy.
@@ -104,8 +160,15 @@ func (s *Speaker) Write(pcm []byte) {
 		return
 	}
 	s.cur.written += len(pcm)
-	if s.gain != 0 && s.gain != 1 {
-		pcm = scale(pcm, s.gain)
+	g := 1.0
+	if s.gain != 0 {
+		g = s.gain
+	}
+	if s.Level != 0 {
+		g *= s.level(pcm)
+	}
+	if g != 1 {
+		pcm = scale(pcm, g)
 	}
 	select {
 	case s.cur.q <- pcm:

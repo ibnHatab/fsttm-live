@@ -35,6 +35,7 @@ type Config struct {
 		Speech   int           `yaml:"speech"`   // the channel kept
 		Ref      int           `yaml:"ref"`      // echo reference channel, -1 none
 		Out      string        `yaml:"out"`      // playback: aplay -D, or pulse:SINK; empty: default
+		Level    float64       `yaml:"level"`    // her speech out, dBFS RMS, at a 1 m bubble (scripts/calib); 0: as recorded
 		VADMode  int           `yaml:"vad_mode"`
 		Hang     time.Duration `yaml:"hang"`
 		MaxUtt   time.Duration `yaml:"max_utterance"`
@@ -62,13 +63,14 @@ type Config struct {
 
 // Prefs are what the person changes while Nina runs, from any plugin.
 type Prefs struct {
-	Mic       bool   `yaml:"mic" json:"mic"`               // Nina listens
-	Voice     bool   `yaml:"voice" json:"voice"`           // Nina's sound (off: replies only shown)
-	VoiceName string `yaml:"voice_name" json:"voice_name"` // the Live voice ("" the model's)
-	Local     string `yaml:"local" json:"local"`           // "" the Live audio; rhvoice, paradee: a local voice speaks her transcript
-	RHVoice   string `yaml:"rhvoice" json:"rhvoice"`       // its profile
-	Paradee   string `yaml:"paradee" json:"paradee"`       // the Paradee socket's voice (a desktop's local voice)
-	Narration string `yaml:"narration" json:"narration"`   // the lowest NOTE level spoken: info, important, urgent, off
+	Mic       bool    `yaml:"mic" json:"mic"`               // Nina listens
+	Voice     bool    `yaml:"voice" json:"voice"`           // Nina's sound (off: replies only shown)
+	VoiceName string  `yaml:"voice_name" json:"voice_name"` // the Live voice ("" the model's)
+	Local     string  `yaml:"local" json:"local"`           // "" the Live audio; rhvoice, paradee: a local voice speaks her transcript
+	RHVoice   string  `yaml:"rhvoice" json:"rhvoice"`       // its profile
+	Paradee   string  `yaml:"paradee" json:"paradee"`       // the Paradee socket's voice (a desktop's local voice)
+	Narration string  `yaml:"narration" json:"narration"`   // the lowest NOTE level spoken: info, important, urgent, off
+	Bubble    float64 `yaml:"bubble" json:"bubble"`         // metres her voice carries (audio.level is 1 m; ×2: +6 dB), 0.5..4
 }
 
 // Load reads path; a missing file is created from the default.

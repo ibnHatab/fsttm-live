@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,6 +101,10 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	n.Ears = &live.Ears{Client: client, Model: cfg.Models.Ears, Vocab: cfg.Models.Vocab,
 		Settle: 200 * time.Millisecond, FinalWait: 1500 * time.Millisecond, MaxAge: 8 * time.Minute, Log: log.Ev}
 	spk := audio.NewSpeaker(cfg.Audio.Out, 24000)
+	spk.Level = cfg.Audio.Level
+	if cfg.Prefs.Bubble > 0 {
+		spk.SetBubble(cfg.Prefs.Bubble)
+	}
 	n.spk = spk
 	knob, ok := dialog.ParseLevel(cfg.Prefs.Narration)
 	if !ok {
@@ -206,7 +211,13 @@ func (n *Dialogue) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 	if p.VoiceName != "" && !contains(LiveVoices, p.VoiceName) {
 		return old, fmt.Errorf("voice_name: %q", p.VoiceName)
 	}
+	if p.Bubble != 0 && (p.Bubble < 0.5 || p.Bubble > audio.MaxBubble) {
+		return old, fmt.Errorf("bubble: %v m (0.5 to %v)", p.Bubble, audio.MaxBubble)
+	}
 	n.prefs = p
+	if p.Bubble != old.Bubble && p.Bubble > 0 {
+		n.spk.SetBubble(p.Bubble)
+	}
 	if p.Mic != old.Mic {
 		n.muted.Store(!p.Mic)
 		if !p.Mic {
@@ -339,6 +350,22 @@ func (n *Dialogue) Context(key, line string) { n.Mind.ContextKey(key, line) }
 
 // SetGain sets her voice's loudness (1: as recorded), e.g. from the person's distance.
 func (n *Dialogue) SetGain(g float64) { n.spk.SetGain(g) }
+
+// SetReach is the person's distance in metres (the radar): with a calibrated level (audio.level)
+// her voice is aimed at them, within the bubble (prefs.bubble).
+func (n *Dialogue) SetReach(m float64) { n.spk.SetReach(m) }
+
+// Loudness is the level her speech is aimed at now, dBFS RMS on the speakers' feed (the
+// calibrated level at the radius: the person within the bubble); 0 uncalibrated.
+func (n *Dialogue) Loudness() float64 {
+	if n.spk.Level == 0 {
+		return 0
+	}
+	return n.spk.Level + 20*math.Log10(n.spk.Radius())
+}
+
+// Calibrated: her loudness is the calibrated level's (audio.level), the bubble and the reach.
+func (n *Dialogue) Calibrated() bool { return n.spk.Level != 0 }
 
 // Note is a NOTE to the floor at a level (info, important, urgent): said when the floor is free
 // and the narration knob lets it through; filtered, it becomes context.

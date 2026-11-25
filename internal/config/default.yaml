@@ -15,6 +15,7 @@ audio:
   speech: 0                              # its processed speech channel
   ref: 5                                 # its echo reference channel (-1: none)
   out: ""                                # playback: aplay -D (plughw:ArrayUAC10: the ReSpeaker's jack), pulse:SINK; "" default
+  level: 0                               # her speech out, dBFS RMS, at a 1 m bubble: scripts/calib measures it (0: as recorded)
   vad_mode: 3
   hang: 700ms                            # silence that ends an utterance
   max_utterance: 25s
@@ -51,6 +52,7 @@ prefs:
   rhvoice: slt
   paradee: af_heart
   narration: important                   # the lowest NOTE level spoken: info, important, urgent, off
+  bubble: 1                              # metres her voice carries: 1 the calibrated minimum (audio.level), ×2 +6 dB, up to 4
 
 plugins:
   web:                                   # the panel: preferences, status, the conversation; a kiosk's screen
