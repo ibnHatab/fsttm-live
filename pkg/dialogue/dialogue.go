@@ -68,6 +68,9 @@ func NewEvents(w ...io.Writer) *Events { return evlog.New(w...) }
 type Dialogue struct {
 	// SavePrefs keeps a preferences change (default: written back to the config file)
 	SavePrefs func(Prefs) error
+	// OnAction takes the panel's actions the dialogue does not know (the application's settings);
+	// false: not one of its either
+	OnAction func(action, arg string) (bool, error)
 
 	Cfg    *config.Config
 	Ev     *evlog.Log
@@ -275,6 +278,11 @@ func (n *Dialogue) Do(action, arg string) error {
 		}
 		e.Do(func(e *dialog.Engine) { e.Note(dialog.Note{Level: l, Text: text}) })
 	default:
+		if n.OnAction != nil { // the application's own actions (Nina's settings: name, persona, temperament)
+			if ok, err := n.OnAction(action, arg); ok {
+				return err
+			}
+		}
 		return fmt.Errorf("no action %q", action)
 	}
 	return nil
