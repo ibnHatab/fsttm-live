@@ -44,6 +44,7 @@ type Speaker struct {
 	last   []byte  // the last reply as it came (up to SampleMax): Sample plays it again
 	cur0   []byte  // the current reply's, while it comes
 	ducked atomic.Bool
+	sink   func([]byte) // a remote listener (SetRemote), nil: the speakers
 }
 
 // DuckGain is her voice while a person speaks over it (-12 dB): the barge-in's feedback, before
@@ -185,6 +186,7 @@ func scale(pcm []byte, g float64) []byte {
 
 type reply struct {
 	cmd     *exec.Cmd
+	sink    func([]byte) // a remote listener's (no cmd)
 	q       chan []byte
 	start   time.Time
 	written int
@@ -195,7 +197,70 @@ func NewSpeaker(device string, rate int) *Speaker {
 	return &Speaker{Device: device, Rate: rate, Done: make(chan bool, 8)}
 }
 
+// SetRemote sends her voice to a remote listener instead of the speakers (her screen on a phone,
+// the user, 2026-11-25): from the next reply on, each chunk goes to sink, paced in real time so a
+// reply's end and a cut mean what they mean here; sink(nil) is a cut (the listener drops what it
+// holds). nil: the speakers again. Her calibrated level and bubble are the room's: not applied.
+func (s *Speaker) SetRemote(sink func(pcm []byte)) {
+	s.mu.Lock()
+	s.sink = sink
+	s.mu.Unlock()
+}
+
+// Remote reports whether her voice goes to a remote listener.
+func (s *Speaker) Remote() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.sink != nil }
+
+// openRemote: a reply to the remote listener, kept at most lead ahead of real time.
+func (s *Speaker) openRemote(sink func([]byte)) *reply {
+	const lead = 250 * time.Millisecond
+	s.ducked.Store(false)
+	r := &reply{q: make(chan []byte, 8192), start: time.Now(), sink: sink}
+	q := r.q // Finish and Cut set r.q to nil once closed: the goroutine may start after that
+	go func() {
+		const piece = 960 // 20 ms at 24 kHz
+		played := 0
+		for b := range q {
+			for i := 0; i < len(b); i += piece {
+				p := b[i:min(len(b), i+piece)]
+				if s.ducked.Load() {
+					p = scale(p, DuckGain)
+				}
+				s.mu.Lock()
+				cut := r.cut
+				s.mu.Unlock()
+				if cut {
+					break
+				}
+				sink(p)
+				played += len(p)
+				at := time.Duration(played/2) * time.Second / time.Duration(s.Rate)
+				if ahead := at - time.Since(r.start); ahead > lead {
+					time.Sleep(ahead - lead)
+				}
+			}
+		}
+		s.mu.Lock()
+		cut := r.cut
+		s.mu.Unlock()
+		if !cut { // played out on the listener's side
+			at := time.Duration(played/2) * time.Second / time.Duration(s.Rate)
+			time.Sleep(max(0, at-time.Since(r.start)) + 150*time.Millisecond)
+		}
+		s.mu.Lock()
+		if s.cur == r {
+			s.cur = nil
+		}
+		cut = r.cut
+		s.mu.Unlock()
+		s.Done <- !cut
+	}()
+	return r
+}
+
 func (s *Speaker) open() *reply {
+	if s.sink != nil {
+		return s.openRemote(s.sink)
+	}
 	var cmd *exec.Cmd
 	if sink, ok := strings.CutPrefix(s.Device, "pulse:"); ok { // a PulseAudio sink, e.g. an echo canceller's
 		cmd = exec.Command("pacat", "-d", sink, "--rate="+strconv.Itoa(s.Rate), "--channels=1", "--format=s16le", "--latency-msec=60")
@@ -217,10 +282,11 @@ func (s *Speaker) open() *reply {
 	}
 	s.ducked.Store(false)
 	r := &reply{cmd: cmd, q: make(chan []byte, 8192), start: time.Now()}
+	q := r.q // Finish and Cut set r.q to nil once closed: the goroutine may start after that
 	go func(w io.WriteCloser) {
 		const piece = 960 // 20 ms at 24 kHz: the duck applies from the next piece
 	out:
-		for b := range r.q {
+		for b := range q {
 			for i := 0; i < len(b); i += piece {
 				p := b[i:min(len(b), i+piece)]
 				if s.ducked.Load() {
@@ -264,7 +330,7 @@ func (s *Speaker) Write(pcm []byte) {
 	if s.gain != 0 {
 		g = s.gain
 	}
-	if s.Level != 0 {
+	if s.Level != 0 && s.cur.sink == nil {
 		g *= s.level(pcm)
 	}
 	if g != 1 {
@@ -313,7 +379,11 @@ func (s *Speaker) Cut() (heard, written time.Duration) {
 		close(r.q)
 		r.q = nil
 	}
-	r.cmd.Process.Kill()
+	if r.sink != nil {
+		go r.sink(nil) // the listener drops what it holds
+	} else {
+		r.cmd.Process.Kill()
+	}
 	s.cur = nil
 	s.cur0 = nil
 	return heard, written

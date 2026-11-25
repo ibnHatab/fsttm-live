@@ -86,7 +86,13 @@ type Dialogue struct {
 	mu    sync.Mutex
 	prefs config.Prefs
 	muted atomic.Bool
-	capt  *audio.Capture
+	// a remote microphone and voice (her screen on a phone, through /api/audio)
+	remoteMic atomic.Bool
+	frames    chan audio.Frame
+	fmu       sync.Mutex
+	fclosed   bool
+	rbuf      []byte
+	capt      *audio.Capture
 }
 
 func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (*Dialogue, error) {
@@ -162,6 +168,23 @@ func (n *Dialogue) Run(ctx context.Context) error {
 	}
 	a := n.Cfg.Audio
 	frames := make(chan audio.Frame, 64)
+	local := make(chan audio.Frame, 64)
+	n.frames = frames
+	go func() { // the room's microphone, unless a remote one (her screen on a phone) is on
+		for f := range local {
+			if n.remoteMic.Load() {
+				continue
+			}
+			select {
+			case frames <- f:
+			default:
+			}
+		}
+		n.fmu.Lock()
+		n.fclosed = true
+		close(frames)
+		n.fmu.Unlock()
+	}()
 	n.capt = &audio.Capture{Device: a.Device, Channels: a.Channels, Speech: a.Speech, Ref: a.Ref}
 	go func() {
 		// the microphone again whenever it goes (the ReSpeaker unplugged, the device busy at a
@@ -169,7 +192,7 @@ func (n *Dialogue) Run(ctx context.Context) error {
 		wait, last := 2*time.Second, ""
 		for ctx.Err() == nil {
 			t0 := time.Now()
-			err := n.capt.Run(frames)
+			err := n.capt.Run(local)
 			if ctx.Err() != nil {
 				break
 			}
@@ -192,7 +215,7 @@ func (n *Dialogue) Run(ctx context.Context) error {
 				wait = 30 * time.Second
 			}
 		}
-		close(frames)
+		close(local)
 	}()
 	defer n.capt.Stop()
 	margin := a.Barge
@@ -203,7 +226,7 @@ func (n *Dialogue) Run(ctx context.Context) error {
 		margin = 12 // scripts/calib: her echo ~22 dB under the reference, a person ~3 dB
 	}
 	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 300 * time.Millisecond, BargeMargin: margin,
-		MaxUtt: a.MaxUtt, Muted: n.muted.Load}
+		MaxUtt: a.MaxUtt, Muted: func() bool { return n.muted.Load() && !n.remoteMic.Load() }}
 	go ep.Run(frames, n.Engine.Vad)
 	n.Ev.Ev("ready", map[string]any{"mind": n.Cfg.Models.Mind, "ears": n.Cfg.Models.Ears, "config": n.Cfg.Path(), "prefs": n.Prefs()})
 	n.Engine.Run(ctx)
@@ -254,7 +277,7 @@ func (n *Dialogue) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 	}
 	tts := localVoice(p)
 	n.Engine.Ctl <- func(e *dialog.Engine) {
-		e.SetSilent(!p.Voice)
+		e.SetSilent(!p.Voice && !n.spk.Remote()) // a remote listener hears her whatever the room's switch
 		e.SetKnob(knob)
 		e.SetLocal(tts)
 	}
@@ -478,6 +501,58 @@ func firstNonZero(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+// RemoteMic: a remote microphone (her screen on a phone: the user, 2026-11-25, talk from the phone
+// while the room's is off, or from the room) is what she hears while on; turned on, she wakes, as
+// at the talk button. Off: the room's microphone again (as its switch says).
+func (n *Dialogue) RemoteMic(on bool) {
+	if n.remoteMic.Swap(on) == on {
+		return
+	}
+	n.fmu.Lock()
+	n.rbuf = nil
+	n.fmu.Unlock()
+	n.Ev.Ev("remote", map[string]any{"mic": on})
+	if on {
+		n.Engine.Do((*dialog.Engine).Wake)
+	}
+}
+
+// RemoteFrame is the remote microphone's sound: s16le mono 16 kHz, any length.
+func (n *Dialogue) RemoteFrame(pcm []byte) {
+	if !n.remoteMic.Load() {
+		return
+	}
+	n.fmu.Lock()
+	defer n.fmu.Unlock()
+	if n.fclosed || n.frames == nil {
+		return
+	}
+	n.rbuf = append(n.rbuf, pcm...)
+	const fb = audio.FrameLen * 2
+	for len(n.rbuf) >= fb {
+		f := audio.Frame{PCM: append([]byte(nil), n.rbuf[:fb]...)}
+		n.rbuf = n.rbuf[fb:]
+		select {
+		case n.frames <- f:
+		default:
+		}
+	}
+}
+
+// RemoteVoice sends her voice to a remote listener (sink: 24 kHz s16le chunks; nil a cut) instead
+// of the room's speakers, from her next reply on; nil: the speakers again. While a listener has
+// it, she speaks even with the room's voice switched off.
+func (n *Dialogue) RemoteVoice(sink func([]byte)) {
+	if (sink != nil) == n.spk.Remote() {
+		n.spk.SetRemote(sink) // a new listener in its place
+		return
+	}
+	n.spk.SetRemote(sink)
+	silent := !n.Prefs().Voice && sink == nil
+	n.Engine.Ctl <- func(e *dialog.Engine) { e.SetSilent(silent) }
+	n.Ev.Ev("remote", map[string]any{"voice": sink != nil})
 }
 
 // Calibrated: her loudness is the calibrated level's (audio.level), the bubble and the reach.

@@ -14,9 +14,11 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +44,8 @@ type Web struct {
 	// Remote: where "/" leads a page that came through a proxy (Tailscale serve: from outside, the
 	// user, 2026-11-25: just Nina, /nina/shell.html); a local visit keeps this panel. "" none.
 	Remote string `yaml:"remote"`
+
+	audio *websocket.Conn // the one remote audio client (/api/audio)
 
 	mu     sync.Mutex
 	facts  map[string]map[string]any // the last event of each sticky kind (persona), for /api/state
@@ -204,6 +208,82 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 		}
 		writeJSON(rw, h.Status())
 	})
+	// /api/audio: a remote microphone and voice (her screen on a phone, the user, 2026-11-25). A
+	// WebSocket: binary up is the microphone (s16le mono 16 kHz), binary down her voice (s16le mono
+	// 24 kHz); text up {"mic": bool, "voice": bool}, text down {"cut": true} (drop what is held). One
+	// client: a new one takes the place. Through the tailnet's proxy, or from an allowed origin.
+	mux.HandleFunc("GET /api/audio", func(rw http.ResponseWriter, r *http.Request) {
+		ra, ok := h.(interface {
+			RemoteMic(bool)
+			RemoteFrame([]byte)
+			RemoteVoice(func([]byte))
+		})
+		if !ok {
+			http.NotFound(rw, r)
+			return
+		}
+		up := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return w.audioOrigin(r) }}
+		c, err := up.Upgrade(rw, r, nil)
+		if err != nil {
+			return
+		}
+		w.mu.Lock()
+		old := w.audio
+		w.audio = c
+		w.mu.Unlock()
+		if old != nil {
+			old.Close()
+		}
+		var wmu sync.Mutex
+		send := func(p []byte) {
+			wmu.Lock()
+			defer wmu.Unlock()
+			c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if p == nil {
+				c.WriteMessage(websocket.TextMessage, []byte(`{"cut":true}`))
+				return
+			}
+			c.WriteMessage(websocket.BinaryMessage, p)
+		}
+		defer func() {
+			c.Close()
+			w.mu.Lock()
+			mine := w.audio == c
+			if mine {
+				w.audio = nil
+			}
+			w.mu.Unlock()
+			if mine { // the phone gone: the room's microphone and speakers again
+				ra.RemoteMic(false)
+				ra.RemoteVoice(nil)
+			}
+		}()
+		for {
+			mt, data, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			switch mt {
+			case websocket.BinaryMessage:
+				ra.RemoteFrame(data)
+			case websocket.TextMessage:
+				var m struct{ Mic, Voice *bool }
+				if json.Unmarshal(data, &m) != nil {
+					continue
+				}
+				if m.Mic != nil {
+					ra.RemoteMic(*m.Mic)
+				}
+				if m.Voice != nil {
+					if *m.Voice {
+						ra.RemoteVoice(send)
+					} else {
+						ra.RemoteVoice(nil)
+					}
+				}
+			}
+		}
+	})
 	mux.HandleFunc("GET /api/events", func(rw http.ResponseWriter, r *http.Request) {
 		fl, ok := rw.(http.Flusher)
 		if !ok {
@@ -261,4 +341,22 @@ func writeJSON(rw http.ResponseWriter, v any) {
 func proxied(r *http.Request) bool {
 	return r.Header.Get("Tailscale-User-Login") != "" || r.Header.Get("X-Forwarded-For") != "" ||
 		r.Header.Get("X-Forwarded-Proto") != ""
+}
+
+// audioOrigin: the remote audio's page is this panel's own (through the tailnet's proxy, or the
+// same host) or an allowed origin's.
+func (w *Web) audioOrigin(r *http.Request) bool {
+	o := r.Header.Get("Origin")
+	if o == "" || proxied(r) {
+		return true
+	}
+	if u, err := url.Parse(o); err == nil && u.Host == r.Host {
+		return true
+	}
+	for _, a := range w.AllowOrigin {
+		if a == "*" || a == o {
+			return true
+		}
+	}
+	return false
 }
