@@ -126,6 +126,10 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	log.Quiet["interim"], log.Quiet["said"] = true, true // the panel's; the file has heard and reply_done
 	go func() {
 		for ok := range spk.Done {
+			if spk.Level != 0 { // the normaliser's own view of what it played (the live calibration reads it)
+				est, target, r := spk.Stats()
+				n.Ev.Ev("voice_level", map[string]any{"stream_db": math.Round(est*10) / 10, "target_db": math.Round(target*10) / 10, "radius_m": r})
+			}
 			n.Engine.SpkDone <- ok
 		}
 	}()

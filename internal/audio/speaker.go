@@ -47,6 +47,15 @@ type Speaker struct {
 // the words decide (a cut, or her full voice back).
 const DuckGain = 0.25
 
+// Stats: the stream's learnt speech level and the level it is brought to now (dBFS RMS), and
+// the radius it is aimed at (metres).
+func (s *Speaker) Stats() (est, target, radius float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.radius()
+	return s.est, s.Level + s.Gain(r), r
+}
+
 // Duck lowers her voice now, as it is played (not as it is queued: the reply comes faster than
 // real time), or brings it back.
 func (s *Speaker) Duck(on bool) { s.ducked.Store(on) }

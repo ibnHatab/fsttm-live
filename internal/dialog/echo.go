@@ -100,7 +100,12 @@ func Novel(heard, said string) []string {
 // both in her echo ("for Nina").
 var filler = map[string]bool{"nina": true, "a": true, "an": true, "the": true, "for": true, "to": true,
 	"and": true, "of": true, "is": true, "it": true, "in": true, "on": true, "i": true, "you": true,
-	"so": true, "uh": true, "um": true, "oh": true, "yeah": true, "that": true, "this": true, "at": true}
+	"so": true, "uh": true, "um": true, "oh": true, "yeah": true, "that": true, "this": true, "at": true,
+	// backchannels: the listener's "I follow", not a turn (live, 2026-11-25: "Mm-hm, yes" heard as
+	// "Mam, yes" cut her)
+	"yes": true, "yep": true, "yup": true, "mm": true, "mmm": true, "mhm": true, "mmhm": true, "hmm": true,
+	"hm": true, "huh": true, "aha": true, "ah": true, "ok": true, "okay": true, "right": true, "sure": true,
+	"see": true, "mam": true, "alright": true}
 
 // BargeIn decides from the novel words: two or more that are not filler, or one interrupter.
 func BargeIn(novel []string) bool {
