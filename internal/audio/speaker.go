@@ -156,8 +156,11 @@ func (s *Speaker) level(pcm []byte) float64 {
 		s.est = -20 // what the Live voice gives, about, before the first measure
 	}
 	if r := RMS(pcm); r > 0 {
+		// an average of the chunks' energies, as the calibration measured speech (an average of
+		// their dB reads speech ~3 dB lower: live, 2026-11-25, her feed at -33 for a -36 target)
 		if d := 20 * math.Log10(float64(r)/32768); d > -50 {
-			s.est += (d - s.est) * 0.05
+			p := math.Pow(10, s.est/10)
+			s.est = 10 * math.Log10(p+(math.Pow(10, d/10)-p)*0.05)
 		}
 	}
 	return math.Pow(10, (s.Level-s.est+s.Gain(s.radius()))/20)
