@@ -86,7 +86,9 @@ var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply
 	"cut": true, "echo": true, "aside": true, "asleep_ignored": true, "attention": true, "note_queued": true,
 	"note_filtered": true, "tool": true, "prefs": true, "wake": true, "sleep": true, "stop": true, "typed": true,
 	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true,
-	"persona": true, "ui": true, "surprises": true, "presence": true, "settings": true}
+	"persona": true, "ui": true, "surprises": true, "presence": true, "settings": true,
+	// the person heard as they speak (her card: progressive recognition, the utterances split)
+	"vad_start": true, "vad_end": true, "asleep_local": true, "phantom_name": true, "barge_duck": true, "echo_stripped": true}
 
 func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux := http.NewServeMux()
