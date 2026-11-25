@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"math"
 	"time"
 
 	webrtcvad "github.com/maxhawkins/go-webrtcvad"
@@ -15,6 +16,10 @@ const (
 	Start Kind = iota // speech began; PCM is the pre-roll
 	Audio             // 100 ms of the open utterance
 	End               // the utterance ended (hang time of silence, or the length cap)
+	// Barge: a voice over hers, clearly above her echo (BargeMargin), while she speaks: once per
+	// utterance, as soon as the evidence holds (the dialog ducks her at once: the person's
+	// feedback, before any word is transcribed)
+	Barge
 )
 
 type Event struct {
@@ -34,6 +39,46 @@ type Endpointer struct {
 	PreRoll time.Duration // audio kept from before the start
 	MaxUtt  time.Duration // longest utterance (media in the room must not hold the floor)
 	Muted   func() bool   // the mic switch: frames are silence while it is off
+	// BargeMargin: a voiced frame within this many dB of the echo reference's envelope is the
+	// person's (her echo, after the array's canceller, is ~22 dB under it; a person near the
+	// array ~3 dB: scripts/calib). 0: no Barge events (no reference: a plain microphone).
+	BargeMargin float64
+}
+
+// barge is the evidence of a voice over hers: the reference's envelope (decaying 40 dB/s: her
+// echo's tail in the room and the canceller's latency) and the last 15 frames' verdicts.
+type barge struct {
+	env  float64
+	hist []bool
+	sent bool
+}
+
+func dbfs(rms int) float64 {
+	if rms <= 0 {
+		return -120
+	}
+	return 20 * math.Log10(float64(rms)/32768)
+}
+
+// frame: true when the evidence of a voice over hers holds now (8 of the last 15 frames, 160 ms).
+func (b *barge) frame(margin float64, voiced bool, speech []byte, ref int) bool {
+	r := dbfs(ref)
+	b.env = math.Max(r, b.env-40*0.02)
+	if b.env < -120 {
+		b.env = -120
+	}
+	over := voiced && b.env > -70 && dbfs(RMS(speech)) >= b.env-margin
+	b.hist = append(b.hist, over)
+	if len(b.hist) > 15 {
+		b.hist = b.hist[1:]
+	}
+	n := 0
+	for _, v := range b.hist {
+		if v {
+			n++
+		}
+	}
+	return n >= 8
 }
 
 func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
@@ -55,6 +100,7 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 		refSum  int
 		pre     [][]byte
 		chunk   []byte
+		bg      barge
 	)
 	maxPre := int(p.PreRoll / (20 * time.Millisecond))
 	hangF := int(p.Hang / (20 * time.Millisecond))
@@ -73,6 +119,7 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 			Voiced:  time.Duration(voicedN) * 20 * time.Millisecond,
 			Pitched: time.Duration(pitchN) * 20 * time.Millisecond, Forced: forced}
 		active, hist = false, nil
+		bg.sent = false
 	}
 	for f := range in {
 		pcm := f.PCM
@@ -85,6 +132,7 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 		if len(hist) > 10 {
 			hist = hist[1:]
 		}
+		over := p.BargeMargin > 0 && bg.frame(p.BargeMargin, voiced, pcm, f.Ref)
 		if !active {
 			pre = append(pre, pcm)
 			if len(pre) > maxPre {
@@ -110,6 +158,10 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 		frames++
 		refSum += f.Ref
 		chunk = append(chunk, pcm...)
+		if over && !bg.sent {
+			bg.sent = true
+			out <- Event{Kind: Barge, Ref: f.Ref}
+		}
 		if voiced {
 			quiet = 0
 			voicedN++

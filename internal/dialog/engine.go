@@ -163,6 +163,7 @@ type Engine struct {
 
 	idle     atomic.Bool  // for the test driver: the floor free, nothing heard or said
 	speaking atomic.Int64 // unix ms when the current reply's audio started, 0 if none
+	duckSeq  int          // the utterance her voice is ducked for (Barge), 0 none
 }
 
 func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string, map[string]any)) *Engine {
@@ -279,9 +280,19 @@ func (e *Engine) onVad(ev audio.Event) {
 		} else {
 			e.ears.Audio(ev.PCM)
 		}
+	case audio.Barge: // a voice over hers, above her echo: she yields at once (ducks), the words decide
+		if d, ok := e.spk.(interface{ Duck(bool) }); ok && e.open && e.tent[e.seq] && e.speaking.Load() != 0 {
+			d.Duck(true)
+			e.duckSeq = e.seq
+			e.Log("barge_duck", map[string]any{"seq": e.seq, "ref": ev.Ref})
+		}
 	case audio.End:
 		if !e.open {
 			return
+		}
+		if e.duckSeq == e.seq { // her voice back if the words do not say otherwise soon
+			seq := e.seq
+			time.AfterFunc(2500*time.Millisecond, func() { e.Ctl <- func(e *Engine) { e.unduck(seq, "timeout") } })
 		}
 		if k := e.cfg.Spotter; k != nil {
 			if hit := k.End(); e.kwsHit == "" {
@@ -351,6 +362,7 @@ func (e *Engine) onHeard(h live.Heard) {
 				return
 			}
 			e.Log("echo", map[string]any{"seq": h.Seq, "text": h.Text})
+			e.unduck(h.Seq, "echo")
 			return
 		}
 	}
@@ -458,7 +470,20 @@ func (e *Engine) checkBarge(seq int, text string) {
 // cut is the local barge-in: the speaker stops now, the rest of the turn is dropped, the floor
 // goes to the person (SYSTEM →(K,G) BOTHs →(R,K) USER), and the next turn tells the mind
 // what was heard of its reply.
+// unduck brings her voice back after a duck for seq that was not a barge-in.
+func (e *Engine) unduck(seq int, why string) {
+	if e.duckSeq != seq || seq == 0 {
+		return
+	}
+	e.duckSeq = 0
+	if d, ok := e.spk.(interface{ Duck(bool) }); ok {
+		d.Duck(false)
+		e.Log("barge_unduck", map[string]any{"seq": seq, "why": why})
+	}
+}
+
 func (e *Engine) cut() {
+	e.duckSeq = 0
 	heard, written := e.spk.Cut()
 	e.mind.Cancel(e.turnID)
 	frac := 0.0

@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Speaker plays one reply at a time (24 kHz s16le mono, what the Live API and RHVoice give)
@@ -37,7 +40,19 @@ type Speaker struct {
 	est    float64 // her stream's speech level, dBFS RMS (a running estimate)
 	last   []byte  // the last reply as it came (up to SampleMax): Sample plays it again
 	cur0   []byte  // the current reply's, while it comes
+	ducked atomic.Bool
 }
+
+// DuckGain is her voice while a person speaks over it (-12 dB): the barge-in's feedback, before
+// the words decide (a cut, or her full voice back).
+const DuckGain = 0.25
+
+// Duck lowers her voice now, as it is played (not as it is queued: the reply comes faster than
+// real time), or brings it back.
+func (s *Speaker) Duck(on bool) { s.ducked.Store(on) }
+
+// Ducked reports whether her voice is lowered.
+func (s *Speaker) Ducked() bool { return s.ducked.Load() }
 
 // MaxGain is the loudest the calibration allows over the minimum: +12 dB, her echo still 10 dB
 // under the person's voice on the processed channel (+18: her echo opens utterances).
@@ -177,11 +192,24 @@ func (s *Speaker) open() *reply {
 		s.Done <- false
 		return nil
 	}
+	if f, ok := w.(interface{ Fd() uintptr }); ok {
+		// a small pipe: what is written is played within ~85 ms, so a duck is heard at once
+		unix.FcntlInt(f.Fd(), unix.F_SETPIPE_SZ, 4096)
+	}
+	s.ducked.Store(false)
 	r := &reply{cmd: cmd, q: make(chan []byte, 8192), start: time.Now()}
 	go func(w io.WriteCloser) {
+		const piece = 960 // 20 ms at 24 kHz: the duck applies from the next piece
+	out:
 		for b := range r.q {
-			if _, err := w.Write(b); err != nil {
-				break
+			for i := 0; i < len(b); i += piece {
+				p := b[i:min(len(b), i+piece)]
+				if s.ducked.Load() {
+					p = scale(p, DuckGain)
+				}
+				if _, err := w.Write(p); err != nil {
+					break out
+				}
 			}
 		}
 		w.Close()

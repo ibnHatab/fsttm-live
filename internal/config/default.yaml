@@ -16,6 +16,7 @@ audio:
   ref: 5                                 # its echo reference channel (-1: none)
   out: ""                                # playback: aplay -D (plughw:ArrayUAC10: the ReSpeaker's jack), pulse:SINK; "" default
   level: 0                               # her speech out, dBFS RMS, at a 1 m bubble: scripts/calib measures it (0: as recorded)
+  barge: 12                              # dB: a voice this close to the echo reference is the person's: she ducks at once (scripts/calib; -1 off)
   vad_mode: 3
   hang: 700ms                            # silence that ends an utterance
   max_utterance: 25s

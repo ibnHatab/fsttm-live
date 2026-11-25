@@ -184,7 +184,14 @@ func (n *Dialogue) Run(ctx context.Context) error {
 		close(frames)
 	}()
 	defer n.capt.Stop()
-	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 300 * time.Millisecond,
+	margin := a.Barge
+	switch {
+	case a.Ref < 0 || margin < 0: // no reference: no telling her echo from a voice by level
+		margin = 0
+	case margin == 0:
+		margin = 12 // scripts/calib: her echo ~22 dB under the reference, a person ~3 dB
+	}
+	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 300 * time.Millisecond, BargeMargin: margin,
 		MaxUtt: a.MaxUtt, Muted: n.muted.Load}
 	go ep.Run(frames, n.Engine.Vad)
 	n.Ev.Ev("ready", map[string]any{"mind": n.Cfg.Models.Mind, "ears": n.Cfg.Models.Ears, "config": n.Cfg.Path(), "prefs": n.Prefs()})

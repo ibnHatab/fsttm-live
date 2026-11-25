@@ -39,7 +39,10 @@ type fakeSpk struct {
 	open    bool
 	written int
 	cuts    int
+	ducked  bool
 }
+
+func (f *fakeSpk) Duck(on bool) { f.ducked = on }
 
 func (f *fakeSpk) Write(p []byte) { f.open = true; f.written += len(p) }
 func (f *fakeSpk) Finish() bool   { o := f.open; f.open = false; return o }
@@ -406,5 +409,33 @@ func TestLocalWake(t *testing.T) {
 	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("awake")}) // awake: streamed
 	if len(r.ears.begun) != 2 {
 		t.Fatalf("awake, not streamed: %v", r.ears.begun)
+	}
+}
+
+// A voice over hers (Barge): she ducks at once; her own echo's words bring her back; a person's
+// words cut her.
+func TestBargeDuck(t *testing.T) {
+	r := newRig(t, Config{})
+	r.utter("Nina, tell me about the moon.")
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindSaid, Text: "The moon is reaching perigee today, its closest point to Earth."})
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindAudio, PCM: make([]byte, 4800)})
+	r.e.onVad(audio.Event{Kind: audio.Start})
+	r.e.onVad(audio.Event{Kind: audio.Barge})
+	if !r.spk.ducked {
+		t.Fatal("not ducked on a voice over hers")
+	}
+	seq := r.e.seq
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: seq, Text: "its closest point", Final: true})
+	if r.spk.ducked {
+		t.Fatal("still ducked after her own echo")
+	}
+	r.e.onVad(audio.Event{Kind: audio.Start})
+	r.e.onVad(audio.Event{Kind: audio.Barge})
+	seq = r.e.seq
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: seq, Text: "wait, stop, what about the weather", Final: true})
+	if r.spk.cuts != 1 {
+		t.Fatalf("a barge-in in words did not cut her: %d cuts", r.spk.cuts)
 	}
 }
