@@ -31,6 +31,9 @@ type Speaker struct {
 	// the person's distance calibration fits it (comfortable at r metres: Slope·log2(r) over the
 	// minimum).
 	Slope float64
+	// OnDuck is told when her voice is ducked or back (the music follows it at once: a reflex,
+	// not the rules' next beat)
+	OnDuck func(on bool)
 
 	mu     sync.Mutex
 	cur    *reply
@@ -58,7 +61,11 @@ func (s *Speaker) Stats() (est, target, radius float64) {
 
 // Duck lowers her voice now, as it is played (not as it is queued: the reply comes faster than
 // real time), or brings it back.
-func (s *Speaker) Duck(on bool) { s.ducked.Store(on) }
+func (s *Speaker) Duck(on bool) {
+	if s.ducked.Swap(on) != on && s.OnDuck != nil {
+		go s.OnDuck(on)
+	}
+}
 
 // Ducked reports whether her voice is lowered.
 func (s *Speaker) Ducked() bool { return s.ducked.Load() }

@@ -70,6 +70,8 @@ func NewEvents(w ...io.Writer) *Events { return evlog.New(w...) }
 type Dialogue struct {
 	// SavePrefs keeps a preferences change (default: written back to the config file)
 	SavePrefs func(Prefs) error
+	// OnDuck: her voice was ducked (a person over her) or is back; Loudness has changed with it
+	OnDuck func(on bool)
 	// OnAction takes the panel's actions the dialogue does not know (the application's settings);
 	// false: not one of its either
 	OnAction func(action, arg string) (bool, error)
@@ -103,6 +105,11 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 		Settle: 200 * time.Millisecond, FinalWait: 1500 * time.Millisecond, MaxAge: 8 * time.Minute, Log: log.Ev}
 	spk := audio.NewSpeaker(cfg.Audio.Out, 24000)
 	spk.Level = cfg.Audio.Level
+	spk.OnDuck = func(on bool) {
+		if f := n.OnDuck; f != nil {
+			f(on)
+		}
+	}
 	if cfg.Prefs.BubbleSlope > 0 {
 		spk.SetSlope(cfg.Prefs.BubbleSlope)
 	}
