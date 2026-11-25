@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestLoadSavePrefs(t *testing.T) {
 		}
 	}
 	c2, err := Load(p)
-	if err != nil || c2.Prefs != pr {
+	if err != nil || !reflect.DeepEqual(c2.Prefs, pr) {
 		t.Fatalf("reload: %v %+v", err, c2.Prefs)
 	}
 }

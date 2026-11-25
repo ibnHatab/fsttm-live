@@ -24,6 +24,10 @@ type Speaker struct {
 	// calibration's minimum (scripts/calib: as loud at the microphones as a person talking near
 	// them). 0: no normalising, her voice as recorded (times SetGain).
 	Level float64
+	// Slope is how much louder she gets per doubling of the radius, dB (0: 6, the free field's):
+	// the person's distance calibration fits it (comfortable at r metres: Slope·log2(r) over the
+	// minimum).
+	Slope float64
 
 	mu     sync.Mutex
 	cur    *reply
@@ -31,11 +35,29 @@ type Speaker struct {
 	bubble float64 // metres her voice is meant to reach (0: 1); SetBubble
 	reach  float64 // the person's distance (0: unknown); SetReach
 	est    float64 // her stream's speech level, dBFS RMS (a running estimate)
+	last   []byte  // the last reply as it came (up to SampleMax): Sample plays it again
+	cur0   []byte  // the current reply's, while it comes
 }
 
-// MaxBubble is the widest bubble the calibration allows: +12 dB over the minimum, her echo still
-// under the person's voice on the processed channel (wider: her echo opens utterances).
-const MaxBubble = 4.0
+// MaxGain is the loudest the calibration allows over the minimum: +12 dB, her echo still 10 dB
+// under the person's voice on the processed channel (+18: her echo opens utterances).
+const MaxGain = 12.0
+
+// SampleMax is the length of her last reply kept for Sample (24 kHz s16le: 12 s).
+const SampleMax = 24000 * 2 * 12
+
+func (s *Speaker) slope() float64 {
+	if s.Slope > 0 {
+		return s.Slope
+	}
+	return 6
+}
+
+// MaxBubble is the widest bubble: MaxGain at the slope (4 m at 6 dB a doubling).
+func (s *Speaker) MaxBubble() float64 { return math.Pow(2, MaxGain/s.slope()) }
+
+// Gain is the dB over the minimum for a radius in metres.
+func (s *Speaker) Gain(r float64) float64 { return s.slope() * math.Log2(r) }
 
 // SetGain scales her voice from the next chunk on. 1 is as recorded; clipped to [0.2, 2].
 func (s *Speaker) SetGain(g float64) {
@@ -45,11 +67,39 @@ func (s *Speaker) SetGain(g float64) {
 }
 
 // SetBubble is how far her voice carries, in metres (the person's knob): 1 is the calibrated
-// minimum, each doubling 6 dB louder; [0.5, MaxBubble].
+// minimum, each doubling Slope dB louder; [0.5, MaxBubble].
 func (s *Speaker) SetBubble(m float64) {
 	s.mu.Lock()
-	s.bubble = math.Max(0.5, math.Min(MaxBubble, m))
+	s.bubble = math.Max(0.5, math.Min(s.MaxBubble(), m))
 	s.mu.Unlock()
+}
+
+// SetSlope is the distance calibration's dB per doubling (clipped to 2..9).
+func (s *Speaker) SetSlope(db float64) {
+	s.mu.Lock()
+	s.Slope = math.Max(2, math.Min(9, db))
+	s.bubble = math.Min(s.bubble, s.MaxBubble())
+	s.mu.Unlock()
+}
+
+// Sample plays her last reply again at the level now (the knob being set); false when there is
+// none or she is speaking.
+func (s *Speaker) Sample() bool {
+	s.mu.Lock()
+	pcm := s.last
+	busy := s.cur != nil
+	s.mu.Unlock()
+	if len(pcm) == 0 || busy {
+		return false
+	}
+	for i := 0; i < len(pcm); i += 4800 {
+		s.Write(pcm[i:min(len(pcm), i+4800)])
+	}
+	s.mu.Lock()
+	s.cur0 = nil // a sample is not a reply to keep
+	s.mu.Unlock()
+	s.Finish()
+	return true
 }
 
 // SetReach is the person's distance (the radar): she speaks to reach them, never past the
@@ -86,7 +136,7 @@ func (s *Speaker) level(pcm []byte) float64 {
 			s.est += (d - s.est) * 0.05
 		}
 	}
-	return math.Pow(10, (s.Level-s.est+20*math.Log10(s.radius()))/20)
+	return math.Pow(10, (s.Level-s.est+s.Gain(s.radius()))/20)
 }
 
 // scale is pcm (s16le) at the gain, a copy.
@@ -160,6 +210,9 @@ func (s *Speaker) Write(pcm []byte) {
 		return
 	}
 	s.cur.written += len(pcm)
+	if len(s.cur0) < SampleMax {
+		s.cur0 = append(s.cur0, pcm[:min(len(pcm), SampleMax-len(s.cur0))]...)
+	}
 	g := 1.0
 	if s.gain != 0 {
 		g = s.gain
@@ -191,6 +244,10 @@ func (s *Speaker) Finish() bool {
 		close(s.cur.q)
 		s.cur.q = nil
 	}
+	if len(s.cur0) > 24000 { // a second or more: what Sample plays
+		s.last = s.cur0
+	}
+	s.cur0 = nil
 	return true
 }
 
@@ -211,5 +268,6 @@ func (s *Speaker) Cut() (heard, written time.Duration) {
 	}
 	r.cmd.Process.Kill()
 	s.cur = nil
+	s.cur0 = nil
 	return heard, written
 }

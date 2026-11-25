@@ -39,10 +39,23 @@ func TestLevelBubbleReach(t *testing.T) {
 		t.Fatalf("reach 6 m: %v dB, want -10", db(g))
 	}
 	s.SetBubble(99)
-	if s.bubble != MaxBubble {
-		t.Fatalf("bubble %v, capped at %v", s.bubble, MaxBubble)
+	if s.bubble != 4 {
+		t.Fatalf("bubble %v, capped at 4", s.bubble)
 	}
 	if g = s.level(tone(-60)); db(g) != -4 { // silence is not learnt from: still -20; at 4 m, 12 dB over -16
 		t.Fatalf("quiet chunk moved the estimate: %v", db(g))
+	}
+}
+
+// The distance calibration's slope: 4 dB a doubling, the bubble's top at +12 dB is 8 m.
+func TestSlope(t *testing.T) {
+	s := &Speaker{Level: -36}
+	s.SetSlope(4)
+	if m := s.MaxBubble(); math.Abs(m-8) > 1e-9 {
+		t.Fatalf("max %v, want 8", m)
+	}
+	s.SetBubble(4)
+	if g := s.Gain(4); g != 8 {
+		t.Fatalf("4 m: %v dB, want 8", g)
 	}
 }

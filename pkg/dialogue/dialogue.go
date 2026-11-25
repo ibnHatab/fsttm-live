@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -102,6 +103,9 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 		Settle: 200 * time.Millisecond, FinalWait: 1500 * time.Millisecond, MaxAge: 8 * time.Minute, Log: log.Ev}
 	spk := audio.NewSpeaker(cfg.Audio.Out, 24000)
 	spk.Level = cfg.Audio.Level
+	if cfg.Prefs.BubbleSlope > 0 {
+		spk.SetSlope(cfg.Prefs.BubbleSlope)
+	}
 	if cfg.Prefs.Bubble > 0 {
 		spk.SetBubble(cfg.Prefs.Bubble)
 	}
@@ -211,8 +215,11 @@ func (n *Dialogue) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 	if p.VoiceName != "" && !contains(LiveVoices, p.VoiceName) {
 		return old, fmt.Errorf("voice_name: %q", p.VoiceName)
 	}
-	if p.Bubble != 0 && (p.Bubble < 0.5 || p.Bubble > audio.MaxBubble) {
-		return old, fmt.Errorf("bubble: %v m (0.5 to %v)", p.Bubble, audio.MaxBubble)
+	if p.BubbleSlope != old.BubbleSlope && p.BubbleSlope > 0 {
+		n.spk.SetSlope(p.BubbleSlope)
+	}
+	if p.Bubble != 0 && (p.Bubble < 0.5 || p.Bubble > n.spk.MaxBubble()+1e-9) {
+		return old, fmt.Errorf("bubble: %v m (0.5 to %.1f)", p.Bubble, n.spk.MaxBubble())
 	}
 	n.prefs = p
 	if p.Bubble != old.Bubble && p.Bubble > 0 {
@@ -274,6 +281,28 @@ func (n *Dialogue) Do(action, arg string) error {
 				p.Voice = on
 			}
 		})
+		return err
+	case "louder", "quieter": // the one sound knob a step, and her last words again at the new level
+		step := 1
+		if action == "quieter" {
+			step = -1
+		}
+		if err := n.Knob(step); err != nil {
+			return err
+		}
+		n.spk.Sample()
+	case "sample":
+		if !n.spk.Sample() {
+			return fmt.Errorf("sample: nothing said yet, or she is speaking")
+		}
+	case "bubble_here": // the distance calibration: arg the person's distance in metres
+		d, err := strconv.ParseFloat(strings.TrimSpace(arg), 64)
+		if err != nil {
+			return fmt.Errorf("bubble_here: %q (metres)", arg)
+		}
+		return n.Here(d)
+	case "bubble_reset":
+		_, err := n.SetPrefs(func(p *config.Prefs) { p.BubblePoints, p.BubbleSlope, p.Bubble = nil, 0, 1 })
 		return err
 	case "ui": // the screen's mode (nina: her own; ha: Home Assistant's full interface), to the pages
 		n.Log("ui", map[string]any{"mode": arg})
@@ -361,7 +390,7 @@ func (n *Dialogue) Loudness() float64 {
 	if n.spk.Level == 0 {
 		return 0
 	}
-	return n.spk.Level + 20*math.Log10(n.spk.Radius())
+	return n.spk.Level + n.spk.Gain(n.spk.Radius())
 }
 
 // Volume is her voice's level at the knob (the bubble's edge), dBFS RMS on the speakers' feed;
@@ -374,7 +403,7 @@ func (n *Dialogue) Volume() float64 {
 	if b <= 0 {
 		b = 1
 	}
-	return n.spk.Level + 20*math.Log10(b)
+	return n.spk.Level + n.spk.Gain(b)
 }
 
 // Knob moves the one sound knob a step (+1 louder, -1 quieter: the bubble times or over the
@@ -386,9 +415,46 @@ func (n *Dialogue) Knob(step int) error {
 			b = 1
 		}
 		b *= math.Pow(math.Sqrt2, float64(step))
-		p.Bubble = math.Round(math.Max(0.5, math.Min(audio.MaxBubble, b))*100) / 100
+		p.Bubble = math.Round(math.Max(0.5, math.Min(n.spk.MaxBubble(), b))*100) / 100
 	})
 	return err
+}
+
+// Here is the distance calibration's point: at d metres the knob now is comfortable. The slope
+// (dB per doubling) is fitted to all the points through the minimum (1 m, 0 dB), and the bubble
+// set to d: the room's space is hers to that distance.
+func (n *Dialogue) Here(d float64) error {
+	if d < 0.5 || d > 12 {
+		return fmt.Errorf("bubble_here: %v m (0.5 to 12)", d)
+	}
+	g := n.spk.Gain(n.spk.Radius())
+	if b := n.Prefs().Bubble; b > 0 {
+		g = n.spk.Gain(b)
+	}
+	_, err := n.SetPrefs(func(p *config.Prefs) {
+		p.BubblePoints = append(append([][2]float64{}, p.BubblePoints...), [2]float64{d, math.Round(g*10) / 10})
+		var xy, xx float64
+		for _, q := range p.BubblePoints {
+			if x := math.Log2(q[0]); math.Abs(x) >= 0.3 {
+				xy += x * q[1]
+				xx += x * x
+			}
+		}
+		if xx > 0 {
+			p.BubbleSlope = math.Round(math.Max(2, math.Min(9, xy/xx))*10) / 10
+		}
+		max := math.Pow(2, audio.MaxGain/firstNonZero(p.BubbleSlope, 6))
+		p.Bubble = math.Round(math.Min(d, max)*100) / 100
+	})
+	n.Log("bubble", map[string]any{"here": d, "gain_db": g, "prefs": n.Prefs()})
+	return err
+}
+
+func firstNonZero(a, b float64) float64 {
+	if a != 0 {
+		return a
+	}
+	return b
 }
 
 // Calibrated: her loudness is the calibrated level's (audio.level), the bubble and the reach.

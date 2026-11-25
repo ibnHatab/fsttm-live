@@ -70,7 +70,11 @@ type Prefs struct {
 	RHVoice   string  `yaml:"rhvoice" json:"rhvoice"`       // its profile
 	Paradee   string  `yaml:"paradee" json:"paradee"`       // the Paradee socket's voice (a desktop's local voice)
 	Narration string  `yaml:"narration" json:"narration"`   // the lowest NOTE level spoken: info, important, urgent, off
-	Bubble    float64 `yaml:"bubble" json:"bubble"`         // metres her voice carries (audio.level is 1 m; ×2: +6 dB), 0.5..4
+	Bubble    float64 `yaml:"bubble" json:"bubble"`         // the one sound knob: metres her voice (and the music) carries; 1 is audio.level
+	// the distance calibration: comfortable points [metres, dB over the minimum] and the slope
+	// fitted to them (dB per doubling of the distance; 0: 6, the free field's)
+	BubbleSlope  float64      `yaml:"bubble_slope" json:"bubble_slope"`
+	BubblePoints [][2]float64 `yaml:"bubble_points,flow,omitempty" json:"bubble_points"`
 }
 
 // Load reads path; a missing file is created from the default.
