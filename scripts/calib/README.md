@@ -61,3 +61,26 @@ Music (MPD's software volume, the stream at −19 dBFS RMS at 100 %): alone, 0 u
 XVF-3000's parameters over USB; root, or a udev rule for 2886:0018), `ana.py` (levels, delay,
 timeline, the endpointer over a channel), `sweep.py` (settings × takes → scores). Takes in
 `runs/calib/` (not in git).
+
+## Live (2026-11-25, `live_duck.py`: the running Nina, the feed and the radio recorded from PulseAudio)
+
+Her line said through the panel, the person (laptop speaker) over it 3 s in: a backchannel
+("Mm-hm, yes": she must come back) and an interruption ("Sorry, wait, what was that…": cut).
+3 rounds each, bubble 1.5 m (target −32.5 dBFS).
+
+| | without music | with music (final) | target |
+|---|---|---|---|
+| her level | −31.7 to −33.5 dBFS | −31.5 to −32.9 | −32.5 |
+| duck event | 6 / 6 | 6 / 6 | |
+| her duck | −11.6 to −15.7 dB | −10.0 to −15.9 (mean −12.2) | −12 (the gain is exact; words differ) |
+| reaction | 586–720 ms after the sound starts | 602–775 ms | |
+| backchannel → her back | 3 / 3, at her level | 3 / 3 | |
+| interruption → cut | 3 / 3 | 3 / 3 | |
+| radio under her voice | | −10.7 to −16.1 dB | −10 |
+| radio under her ducked voice | | −9.1 to −16.0 dB | −10 |
+
+Fixed on the way: backchannels cut her ("Mam, yes"); the normaliser averaged dB (3 dB loud:
+now energies); the radio never linked (the core rebuilds its music host); the radio stayed over her
+ducked voice (Loudness includes the duck, the music follows it at once); the radio lagged a second
+behind her duck (MPD's software mixer acts before its output buffer: now `mixer_type hardware`,
+PulseAudio's cubic curve, `music.curve: pulse`).

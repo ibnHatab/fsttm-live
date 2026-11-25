@@ -38,23 +38,28 @@ def api(path, body=None):
 
 
 def rec(cmd, buf, stop):
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    """Timestamped 100 ms chunks; cmd is a list, or a function giving one (None: not now), run
+    again when it ends (MPD makes a new stream each time it plays)."""
     while not stop.is_set():
-        b = p.stdout.read(3200)
-        if not b:
-            break
-        buf.append((time.time(), b))
-    p.terminate()
+        c = cmd() if callable(cmd) else cmd
+        if c is None:
+            time.sleep(0.2); continue
+        p = subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        while not stop.is_set():
+            b = p.stdout.read(3200)
+            if len(b) < 3200:
+                break
+            buf.append((time.time() - 0.05, b))  # the chunk's middle
+        p.terminate()
+        if not callable(cmd):
+            return
 
 
 def series(buf):
-    """(times of 50 ms frames, dBFS) from timestamped chunks (each chunk's end at its stamp)."""
-    pcm = np.frombuffer(b"".join(b for _, b in buf), "<i2").astype(float) / 32768
-    t_end = buf[-1][0]
-    n = len(pcm) // 800
-    db = np.array([sig.db(np.sqrt(np.mean(pcm[i * 800:(i + 1) * 800] ** 2))) for i in range(n)])
-    t = t_end - (n - np.arange(n)) * 0.05
-    return t, db, pcm
+    """(times, dBFS) of 100 ms chunks: each by its own stamp, so two recordings line up."""
+    t = np.array([a for a, _ in buf])
+    db = np.array([sig.db(np.sqrt(np.mean((np.frombuffer(b, "<i2").astype(float) / 32768) ** 2))) for _, b in buf])
+    return t, db, None
 
 
 def mpd_input():
@@ -138,12 +143,14 @@ def analyse(tr, feed, mus):
     if duck:
         out["react_ms"] = round((duck - tr["t_person"]) * 1000)
     if mus is not None:
-        mt, mdb, _ = mus
-        # her voice on the feed is the feed minus the radio (energies)
-        n = min(len(fdb), len(mdb))
-        ft, fdb_all, mdb = ft[-n:], fdb[-n:], mdb[-n:]
-        her = 10 * np.log10(np.maximum(10 ** (fdb_all / 10) - 10 ** (mdb / 10), 1e-12))
-        out["music_alone"] = level(ft, mdb, tr["t0"] - 0.1, tr["t0"] + 0.3, -90) if tr["t0"] - ft[0] > 0.2 else None
+        mt, mdb0, _ = mus
+        # the radio at the feed's times (no radio recorded there: silent); her voice is the feed
+        # minus the radio (energies)
+        mdb = np.interp(ft, mt, mdb0, left=-120, right=-120)
+        gap = np.min(np.abs(mt[:, None] - ft[None, :]), axis=0) if len(mt) else np.full(len(ft), 9)
+        mdb[gap > 0.15] = -120
+        her = 10 * np.log10(np.maximum(10 ** (fdb / 10) - 10 ** (mdb / 10), 1e-12))
+        out["music_alone"] = level(ft, mdb, tr["t0"] - 1.5, tr["t0"], -90)
         out["music_under_her"] = level(ft, mdb, tr["t_spoke"] + 1.5, tr["t_person"], -90)
         if duck and end:
             out["music_in_duck"] = level(ft, mdb, duck + 0.1, end - 0.05, -90)
@@ -173,16 +180,18 @@ if __name__ == "__main__":
     st = api("/api/state")
     assert st["prefs"]["mic"], "her mic is off"
     api("/api/do", {"action": "wake"})
-    if music:
-        subprocess.run(["mpc", "-q", "play"]); time.sleep(4)
+    if music:  # the radio as in use: she puts it on (her music host sets its level from her voice's)
+        idle()
+        api("/api/do", {"action": "type", "arg": "Nina, play something calm."})
+        time.sleep(3); idle(3.0)
     stop = threading.Event()
     fb, mb = [], []
     th = [threading.Thread(target=rec, args=(["parec", "-d", FEED, "--rate=16000", "--channels=1", "--format=s16le",
                                               "--latency-msec=20"], fb, stop), daemon=True)]
-    mi = mpd_input() if music else None
-    if mi:
-        th.append(threading.Thread(target=rec, args=(["parec", f"--monitor-stream={mi}", "--rate=16000", "--channels=1",
-                                                      "--format=s16le", "--latency-msec=20"], mb, stop), daemon=True))
+    if music:
+        mcmd = lambda: (lambda i: i and ["parec", f"--monitor-stream={i}", "--rate=16000", "--channels=1",
+                                         "--format=s16le", "--latency-msec=20"])(mpd_input())
+        th.append(threading.Thread(target=rec, args=(mcmd, mb, stop), daemon=True))
     for x in th:
         x.start()
     time.sleep(1)
@@ -197,7 +206,7 @@ if __name__ == "__main__":
         for x in th:
             x.join(2)
         if music:
-            subprocess.run(["mpc", "-q", "pause"])
+            subprocess.run(["mpc", "-q", "stop"])
     feed = series(fb)
     mus = series(mb) if mb else None
     res = [analyse(t, feed, mus) for t in trials]
