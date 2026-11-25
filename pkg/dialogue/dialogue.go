@@ -401,7 +401,12 @@ func (n *Dialogue) Loudness() float64 {
 	if n.spk.Level == 0 {
 		return 0
 	}
-	return n.spk.Level + n.spk.Gain(n.spk.Radius())
+	l := n.spk.Level + n.spk.Gain(n.spk.Radius())
+	if n.spk.Ducked() { // a person over her: she is lower, and the music under her with her (live, 2026-11-25:
+		// the radio stayed 3-4 dB over her ducked voice)
+		l += 20 * math.Log10(audio.DuckGain)
+	}
+	return l
 }
 
 // Volume is her voice's level at the knob (the bubble's edge), dBFS RMS on the speakers' feed;
