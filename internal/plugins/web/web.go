@@ -40,9 +40,13 @@ type Web struct {
 	// own screen, her card and personas, up before Home Assistant is)
 	Static map[string]string `yaml:"static"`
 
-	mu    sync.Mutex
-	facts map[string]map[string]any // the last event of each sticky kind (persona), for /api/state
+	mu     sync.Mutex
+	facts  map[string]map[string]any // the last event of each sticky kind (persona), for /api/state
+	recent []map[string]any          // what she did lately (recentKinds), for /api/recent: the activity card
 }
+
+// recentKinds are what the activity card shows: her tool calls, her mood, who is there, surprises.
+var recentKinds = map[string]bool{"tool": true, "persona": true, "presence": true, "surprises": true, "ui": true}
 
 // sticky are the event kinds whose last one a page loading now needs (Nina's persona).
 var sticky = map[string]bool{"persona": true, "surprises": true}
@@ -82,7 +86,7 @@ var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply
 	"cut": true, "echo": true, "aside": true, "asleep_ignored": true, "attention": true, "note_queued": true,
 	"note_filtered": true, "tool": true, "prefs": true, "wake": true, "sleep": true, "stop": true, "typed": true,
 	"mind_error": true, "no_reply": true, "first_audio": true, "said": true, "plugin": true, "plugin_error": true,
-	"persona": true, "ui": true, "surprises": true}
+	"persona": true, "ui": true, "surprises": true, "presence": true}
 
 func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux := http.NewServeMux()
@@ -110,14 +114,31 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 				if !ok {
 					return
 				}
-				if k, _ := e["ev"].(string); sticky[k] {
-					w.mu.Lock()
+				k, _ := e["ev"].(string)
+				w.mu.Lock()
+				if sticky[k] {
 					w.facts[k] = e
-					w.mu.Unlock()
 				}
+				if recentKinds[k] {
+					r := map[string]any{"at": time.Now().Unix()}
+					for kk, v := range e {
+						r[kk] = v
+					}
+					w.recent = append(w.recent, r)
+					if len(w.recent) > 80 {
+						w.recent = w.recent[len(w.recent)-80:]
+					}
+				}
+				w.mu.Unlock()
 			}
 		}
 	}()
+	mux.HandleFunc("GET /api/recent", func(rw http.ResponseWriter, r *http.Request) {
+		w.mu.Lock()
+		out := append([]map[string]any{}, w.recent...)
+		w.mu.Unlock()
+		writeJSON(rw, out)
+	})
 	mux.HandleFunc("GET /api/state", func(rw http.ResponseWriter, r *http.Request) {
 		w.mu.Lock()
 		facts := map[string]any{}
