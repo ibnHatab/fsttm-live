@@ -39,6 +39,9 @@ type Web struct {
 	// Static: more files served, URL prefix → directory (acasa's ha-ui www/nina at /nina/: Nina's
 	// own screen, her card and personas, up before Home Assistant is)
 	Static map[string]string `yaml:"static"`
+	// Remote: where "/" leads a page that came through a proxy (Tailscale serve: from outside, the
+	// user, 2026-11-25: just Nina, /nina/shell.html); a local visit keeps this panel. "" none.
+	Remote string `yaml:"remote"`
 
 	mu     sync.Mutex
 	facts  map[string]map[string]any // the last event of each sticky kind (persona), for /api/state
@@ -93,7 +96,14 @@ var shown = map[string]bool{"heard": true, "interim": true, "turn": true, "reply
 func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
-	mux.Handle("GET /", http.FileServerFS(sub))
+	files := http.FileServerFS(sub)
+	mux.HandleFunc("GET /", func(rw http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && w.Remote != "" && proxied(r) {
+			http.Redirect(rw, r, w.Remote, http.StatusFound)
+			return
+		}
+		files.ServeHTTP(rw, r)
+	})
 	for prefix, dir := range w.Static {
 		if !strings.HasSuffix(prefix, "/") {
 			prefix += "/"
@@ -245,4 +255,10 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 func writeJSON(rw http.ResponseWriter, v any) {
 	rw.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(rw).Encode(v)
+}
+
+// proxied: the request came through a proxy (Tailscale serve sets these), not straight to the port.
+func proxied(r *http.Request) bool {
+	return r.Header.Get("Tailscale-User-Login") != "" || r.Header.Get("X-Forwarded-For") != "" ||
+		r.Header.Get("X-Forwarded-Proto") != ""
 }
