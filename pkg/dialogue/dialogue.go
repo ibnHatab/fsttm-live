@@ -595,6 +595,7 @@ func (n *Dialogue) spotter(cfg *config.Config, ev func(string, map[string]any)) 
 		d, err := oww.New(cfg.Expand(w.Model), cfg.Expand(w.Word))
 		if err != nil {
 			ev("kws_error", map[string]any{"err": err.Error()})
+			fmt.Fprintf(os.Stderr, "wake: openWakeWord did not load (%v): her name is the transcriber's\n", err) // before the log's subscribers
 			return nil
 		}
 		th, label := w.Threshold, w.Label
@@ -606,6 +607,7 @@ func (n *Dialogue) spotter(cfg *config.Config, ev func(string, map[string]any)) 
 		}
 		n.wake = oww.NewStream(d, label, th, ev)
 		ev("kws_ready", map[string]any{"mode": w.Mode, "engine": "oww", "threshold": th})
+		fmt.Fprintf(os.Stderr, "wake: openWakeWord, %s, threshold %.2f, listening continuously\n", cfg.Expand(w.Word), th)
 		return n.wake
 	}
 	k, err := kws.New(cfg.Expand(w.Model), cfg.Expand(w.Keywords), w.Threshold)
