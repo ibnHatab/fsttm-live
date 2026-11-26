@@ -13,6 +13,7 @@ package oww
 
 import (
 	"fmt"
+	"time"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -108,6 +109,8 @@ type Detector struct {
 	pending      []int16     // samples not yet a whole chunk
 	melBuf       [][]float32 // mel frames
 	feat         [][]float32 // embeddings
+	// Spent: the time each model took so far (mel, embedding, the word's), for measuring
+	Spent [3]time.Duration
 }
 
 // New loads the shared models from dir (melspectrogram.onnx, embedding_model.onnx) and the wake
@@ -203,18 +206,22 @@ func (d *Detector) Feed(pcm []byte) (float32, error) {
 		x := append(append([]int16(nil), d.raw...), c...) // the previous chunk's last 30 ms, then this one
 		d.raw = append(d.raw[:0], c[chunk-ctxPad:]...)
 		d.pending = d.pending[chunk:]
+		t0 := time.Now()
 		rows, err := d.melspec(x)
 		if err != nil {
 			return best, err
 		}
+		d.Spent[0] += time.Since(t0)
 		d.melBuf = append(d.melBuf, rows...)
 		if len(d.melBuf) > keepMel {
 			d.melBuf = d.melBuf[len(d.melBuf)-keepMel:]
 		}
+		t0 = time.Now()
 		e, err := d.embed(d.melBuf[len(d.melBuf)-melWin:])
 		if err != nil {
 			return best, err
 		}
+		d.Spent[1] += time.Since(t0)
 		d.feat = append(d.feat, e)
 		if len(d.feat) > keepFeat {
 			d.feat = d.feat[len(d.feat)-keepFeat:]
@@ -223,10 +230,12 @@ func (d *Detector) Feed(pcm []byte) (float32, error) {
 		for _, f := range d.feat[len(d.feat)-nFeat:] {
 			x2 = append(x2, f...)
 		}
+		t0 = time.Now()
 		out, _, err := d.ww.run([]int64{1, nFeat, embDim}, x2)
 		if err != nil {
 			return best, err
 		}
+		d.Spent[2] += time.Since(t0)
 		if out[0] > best {
 			best = out[0]
 		}
