@@ -48,6 +48,11 @@ type Endpointer struct {
 	// radio's talk, at -68 dBFS, still opened utterances and ducked the radio every 3 s (pero,
 	// 2026-11-26; the person there: -39 dBFS).
 	MinLevel float64
+	// BargeLevel: with no reference (a software canceller before the capture), a voiced frame at
+	// least this loud (dBFS RMS) is the person's: her echo there stays far under it (pero, 2026-11-26:
+	// her voice -88 dBFS median, -69 at its loudest, after PipeWire's canceller; the person -39).
+	// 0: off. Evidence and events as BargeMargin's (8 of 15 frames).
+	BargeLevel float64
 }
 
 // barge is the evidence of a voice over hers: the reference's envelope (decaying 40 dB/s: her
@@ -63,6 +68,21 @@ func dbfs(rms int) float64 {
 		return -120
 	}
 	return 20 * math.Log10(float64(rms)/32768)
+}
+
+// level: the evidence without a reference: a voiced frame at least min dBFS (8 of the last 15).
+func (b *barge) level(min float64, voiced bool, speech []byte) bool {
+	b.hist = append(b.hist, voiced && dbfs(RMS(speech)) >= min)
+	if len(b.hist) > 15 {
+		b.hist = b.hist[1:]
+	}
+	n := 0
+	for _, v := range b.hist {
+		if v {
+			n++
+		}
+	}
+	return n >= 8
 }
 
 // frame: true when the evidence of a voice over hers holds now (8 of the last 15 frames, 160 ms).
@@ -141,6 +161,9 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 			hist = hist[1:]
 		}
 		over := p.BargeMargin > 0 && bg.frame(p.BargeMargin, voiced, pcm, f.Ref)
+		if p.BargeLevel < 0 && p.BargeMargin <= 0 {
+			over = bg.level(p.BargeLevel, voiced, pcm)
+		}
 		if !active {
 			pre = append(pre, pcm)
 			if len(pre) > maxPre {

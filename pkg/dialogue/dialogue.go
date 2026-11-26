@@ -227,7 +227,7 @@ func (n *Dialogue) Run(ctx context.Context) error {
 	case margin == 0:
 		margin = 12 // scripts/calib: her echo ~22 dB under the reference, a person ~3 dB
 	}
-	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 500 * time.Millisecond, BargeMargin: margin, MinLevel: a.MinLevel,
+	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 500 * time.Millisecond, BargeMargin: margin, MinLevel: a.MinLevel, BargeLevel: a.BargeLevel,
 		MaxUtt: a.MaxUtt, Muted: func() bool { return n.muted.Load() && !n.remoteMic.Load() }}
 	epIn := frames
 	if n.wake != nil { // the wake word hears every frame, utterance or not (not while the mic is off)

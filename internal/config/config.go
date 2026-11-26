@@ -30,17 +30,18 @@ type Config struct {
 		Vocab []string `yaml:"vocab"` // the ears' customVocabulary
 	} `yaml:"models"`
 	Audio struct {
-		Device   string        `yaml:"device"`   // capture: ALSA device or pulse:SOURCE
-		Channels int           `yaml:"channels"` // 6: the ReSpeaker's firmware
-		Speech   int           `yaml:"speech"`   // the channel kept
-		Ref      int           `yaml:"ref"`      // echo reference channel, -1 none
-		Out      string        `yaml:"out"`      // playback: aplay -D, or pulse:SINK; empty: default
-		Level    float64       `yaml:"level"`    // her speech out, dBFS RMS, at a 1 m bubble (scripts/calib); 0: as recorded
-		Barge    float64       `yaml:"barge"`    // dB: a voice this close to the echo reference is the person's: she ducks at once (0: 12; -1 off)
-		VADMode  int           `yaml:"vad_mode"`
-		MinLevel float64       `yaml:"min_level"` // dBFS: quieter voiced frames are not a voice in the room (0: off; audio.Endpointer)
-		Hang     time.Duration `yaml:"hang"`
-		MaxUtt   time.Duration `yaml:"max_utterance"`
+		Device     string        `yaml:"device"`   // capture: ALSA device or pulse:SOURCE
+		Channels   int           `yaml:"channels"` // 6: the ReSpeaker's firmware
+		Speech     int           `yaml:"speech"`   // the channel kept
+		Ref        int           `yaml:"ref"`      // echo reference channel, -1 none
+		Out        string        `yaml:"out"`      // playback: aplay -D, or pulse:SINK; empty: default
+		Level      float64       `yaml:"level"`    // her speech out, dBFS RMS, at a 1 m bubble (scripts/calib); 0: as recorded
+		Barge      float64       `yaml:"barge"`    // dB: a voice this close to the echo reference is the person's: she ducks at once (0: 12; -1 off)
+		VADMode    int           `yaml:"vad_mode"`
+		BargeLevel float64       `yaml:"barge_level"` // dBFS: with no reference channel, a voice this loud over hers is the person's (0: off)
+		MinLevel   float64       `yaml:"min_level"`   // dBFS: quieter voiced frames are not a voice in the room (0: off; audio.Endpointer)
+		Hang       time.Duration `yaml:"hang"`
+		MaxUtt     time.Duration `yaml:"max_utterance"`
 	} `yaml:"audio"`
 	Dialog struct {
 		FollowUp    time.Duration `yaml:"follow_up"`
