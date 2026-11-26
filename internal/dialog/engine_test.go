@@ -58,12 +58,16 @@ type rig struct {
 	mind *fakeMind
 	spk  *fakeSpk
 	evs  []string
+	told []bool // each "attention" to asleep: whether she was told
 }
 
 func newRig(t *testing.T, cfg Config) *rig {
 	r := &rig{ears: &fakeEars{}, mind: &fakeMind{}, spk: &fakeSpk{}}
 	r.e = New(cfg, r.ears, r.mind, r.spk, nil, func(k string, f map[string]any) {
 		r.evs = append(r.evs, k)
+		if k == "attention" && f["awake"] == false {
+			r.told = append(r.told, f["told"] == true)
+		}
 		t.Logf("%s %v", k, f)
 	})
 	r.e.ctx = context.Background()
@@ -180,9 +184,24 @@ func TestSleep(t *testing.T) {
 	if r.mind.closed != 1 {
 		t.Fatal("asleep, but her session stays open")
 	}
+	if len(r.told) != 1 || !r.told[0] {
+		t.Fatalf("asleep by a sleep phrase, not told: %v", r.told)
+	}
 	r.utter("turn on the lab ventilation")
 	if len(r.mind.turns) != 1 {
 		t.Fatalf("heard while asleep: %v", r.mind.turns)
+	}
+}
+
+// asleep by itself (attention's timeout): not told (her screens keep what they show)
+func TestAsleepNotTold(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 10 * time.Second})
+	r.utter("Nina, hi")
+	r.reply("Hi!")
+	r.e.Attn.State = attention.Asleep // the timeout
+	r.e.awakeChanged()
+	if len(r.told) != 1 || r.told[0] {
+		t.Fatalf("asleep by a timeout, told: %v", r.told)
 	}
 }
 

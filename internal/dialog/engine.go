@@ -174,6 +174,7 @@ type Engine struct {
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
 	linger  int            // the asleep close armed last (a wake disarms it)
+	told    bool           // asleep because she was told (a sleep phrase, Sleep): the attention event says so
 	after   string         // words that came with a bare name while she answered it: her next turn
 	bare    map[int]bool   // seq → her name alone, woken to at its end (its transcript adds only the rest)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
@@ -619,8 +620,9 @@ func (e *Engine) dispatch(text string, typed bool) {
 	} else {
 		e.Attn.OnUtterance(text)
 	}
-	e.send(text)     // first: a sleep phrase's goodbye is a reply, and her session stays for it
-	e.awakeChanged() // closed after the goodbye has played (finishReply)
+	e.told = e.awake && !e.Attn.Awake() // a sleep phrase (her screens close what they show; a timeout leaves it)
+	e.send(text)                        // first: a sleep phrase's goodbye is a reply, and her session stays for it
+	e.awakeChanged()                    // closed after the goodbye has played (finishReply)
 }
 
 // send gives the floor to SYSTEM and the turn to the mind.
@@ -871,8 +873,13 @@ func (e *Engine) onTick() {
 func (e *Engine) awakeChanged() {
 	if a := e.Attn.Awake(); a != e.awake {
 		e.awake = a
-		e.Log("attention", map[string]any{"awake": a})
+		d := map[string]any{"awake": a}
+		if !a && e.told {
+			d["told"] = true
+		}
+		e.Log("attention", d)
 	}
+	e.told = false
 	if e.awake {
 		e.linger++ // a close armed while asleep: not any more
 		return
@@ -940,6 +947,7 @@ func (e *Engine) Sleep() {
 		e.cut()
 		_ = e.Turn.UserAction('R')
 	}
+	e.told = e.awake
 	e.Attn.State = attention.Asleep
 	e.addressed = time.Time{}
 	e.Log("sleep", nil)
