@@ -25,6 +25,7 @@ func main() {
 	whole := flag.Bool("whole", false, "one stream for the whole file")
 	ep := flag.Bool("ep", false, "cut by the dialog's own endpointer (vad_mode 3, hang 700 ms, pre-roll 300 ms), fed as the engine feeds it")
 	hang := flag.Duration("hang", 700*time.Millisecond, "the endpointer's hang (-ep)")
+	minLevel := flag.Float64("minlevel", 0, "the endpointer's minimum level, dBFS (-ep; 0 off)")
 	preroll := flag.Duration("preroll", 300*time.Millisecond, "the endpointer's pre-roll (-ep)")
 	flag.Parse()
 	b, err := os.ReadFile(flag.Arg(0))
@@ -38,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *ep {
-		runEP(k, b, *hang, *preroll)
+		runEP(k, b, *hang, *preroll, *minLevel)
 		return
 	}
 	const chunk = 3200 // 100 ms, as the dialog feeds it
@@ -127,10 +128,10 @@ func main() {
 
 // runEP replays the file through audio.Endpointer and feeds the spotter as internal/dialog's engine
 // does (Begin + the pre-roll at Start, each Audio chunk until a hit, End's flush).
-func runEP(k *kws.Spotter, b []byte, hang, preroll time.Duration) {
+func runEP(k *kws.Spotter, b []byte, hang, preroll time.Duration, minLevel float64) {
 	in := make(chan audio.Frame, 64)
 	out := make(chan audio.Event, 64)
-	e := &audio.Endpointer{Mode: 3, On: 6, Hang: hang, PreRoll: preroll}
+	e := &audio.Endpointer{Mode: 3, On: 6, Hang: hang, PreRoll: preroll, MinLevel: minLevel}
 	go func() {
 		for i := 0; i+640 <= len(b); i += 640 {
 			in <- audio.Frame{PCM: b[i : i+640]}

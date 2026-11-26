@@ -38,6 +38,7 @@ type Config struct {
 		Level    float64       `yaml:"level"`    // her speech out, dBFS RMS, at a 1 m bubble (scripts/calib); 0: as recorded
 		Barge    float64       `yaml:"barge"`    // dB: a voice this close to the echo reference is the person's: she ducks at once (0: 12; -1 off)
 		VADMode  int           `yaml:"vad_mode"`
+		MinLevel float64       `yaml:"min_level"` // dBFS: quieter voiced frames are not a voice in the room (0: off; audio.Endpointer)
 		Hang     time.Duration `yaml:"hang"`
 		MaxUtt   time.Duration `yaml:"max_utterance"`
 	} `yaml:"audio"`

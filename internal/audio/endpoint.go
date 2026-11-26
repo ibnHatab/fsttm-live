@@ -43,6 +43,11 @@ type Endpointer struct {
 	// person's (her echo, after the array's canceller, is ~22 dB under it; a person near the
 	// array ~3 dB: scripts/calib). 0: no Barge events (no reference: a plain microphone).
 	BargeMargin float64
+	// MinLevel: a voiced frame quieter than this (dBFS RMS) is not a voice in the room (0: off).
+	// WebRTC's detector judges a voice's shape, not its loudness: behind a software canceller the
+	// radio's talk, at -68 dBFS, still opened utterances and ducked the radio every 3 s (pero,
+	// 2026-11-26; the person there: -39 dBFS).
+	MinLevel float64
 }
 
 // barge is the evidence of a voice over hers: the reference's envelope (decaying 40 dB/s: her
@@ -127,6 +132,9 @@ func (p *Endpointer) Run(in <-chan Frame, out chan<- Event) error {
 			pcm = silence
 		}
 		voiced, _ := vad.Process(Rate, pcm)
+		if voiced && p.MinLevel < 0 && dbfs(RMS(pcm)) < p.MinLevel {
+			voiced = false
+		}
 		pitched := pitch.Frame(pcm) // always: its window spans frames
 		hist = append(hist, voiced)
 		if len(hist) > 10 {
