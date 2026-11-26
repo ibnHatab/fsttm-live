@@ -48,6 +48,7 @@ type Config struct {
 		AwakeFor    time.Duration `yaml:"awake_for"`
 		StartAsleep bool          `yaml:"start_asleep"`
 		NoteGap     time.Duration `yaml:"note_gap"`
+		MindLinger  time.Duration `yaml:"mind_linger"` // asleep, her session stays open this long (0: 10 min; a wake soon after needs no new one)
 		Wake        struct {
 			Mode      string  `yaml:"mode"`   // cloud | shadow | local
 			Engine    string  `yaml:"engine"` // kws (sherpa-onnx's keyword spotter, per utterance) | oww (openWakeWord, continuous)

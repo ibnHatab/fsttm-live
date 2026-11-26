@@ -133,7 +133,7 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 		ReplyTimeout: 10 * time.Second, Knob: knob, NoteGap: cfg.Dialog.NoteGap,
 		Silent: !cfg.Prefs.Voice, StartAsleep: cfg.Dialog.StartAsleep,
 		Outlast: cfg.Audio.Hang + 600*time.Millisecond,
-		Wake:    cfg.Dialog.Wake.Mode, Spotter: n.spotter(cfg, log.Ev)}, n.Ears, n.Mind, spk, nil, log.Ev)
+		Wake:    cfg.Dialog.Wake.Mode, Spotter: n.spotter(cfg, log.Ev), MindLinger: linger(cfg.Dialog.MindLinger)}, n.Ears, n.Mind, spk, nil, log.Ev)
 	if t := localVoice(cfg.Prefs); t != nil {
 		n.Engine.SetLocal(t)
 	}
@@ -582,6 +582,14 @@ func (n *Dialogue) Note(level, text string) error {
 	}
 	n.Engine.Notes <- dialog.Note{Level: lv, Text: text}
 	return nil
+}
+
+// linger: how long her session stays open asleep (10 min unless set).
+func linger(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 10 * time.Minute
+	}
+	return d
 }
 
 // spotter loads the local wake word unless the mode is the cloud's; a model that does not load

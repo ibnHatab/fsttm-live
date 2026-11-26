@@ -98,6 +98,10 @@ type Config struct {
 	// name in it (the room's talk stays on the machine).
 	Wake    string
 	Spotter Spotter
+	// MindLinger: asleep, her session stays open this long before it is closed (a wake soon after
+	// needs no new one: a session's setup took 0.5 s, now and then 5.4 s); 0: closed at once.
+	// Only text turns go over it: nothing of the room.
+	MindLinger time.Duration
 }
 
 // Spotter is the local wake word (kws): an utterance's audio in, a keyword's label out.
@@ -139,6 +143,7 @@ type Engine struct {
 	pitched map[int]time.Duration
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
+	linger  int            // the asleep close armed last (a wake disarms it)
 	bare    map[int]bool   // seq → her name alone, woken to at its end (its transcript adds only the rest)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
 	interim string
@@ -334,6 +339,9 @@ func (e *Engine) onVad(ev audio.Event) {
 		e.Log("vad_end", map[string]any{"seq": e.seq, "dur_s": ev.Dur.Seconds(), "voiced_s": ev.Voiced.Seconds(), "pitched_s": ev.Pitched.Seconds(),
 			"forced": ev.Forced, "ref": ev.Ref, "aec_ref": ev.Ref > 0})
 		if e.bare[e.seq] {
+			// what it means, for her: after a "go to sleep" a bare "Nina" was taken for more of the
+			// goodbye ("Okay, call me when you need me" again; pero, 2026-11-26)
+			e.cutNote = "(You were asleep; the person has just called your name to wake you. Say in a word or two that you are listening.)\n"
 			e.dispatch(bareName, false) // the floor is free now: her turn
 		}
 	}
@@ -455,7 +463,10 @@ func (e *Engine) spotted(hit string) {
 	e.kwsHit = hit
 	e.Log("kws", map[string]any{"seq": e.seq, "keyword": hit, "held": e.holding, "since_start_ms": time.Since(e.uttT).Milliseconds()})
 	if w, ok := e.mind.(interface{ Warm(context.Context) }); ok && e.holding {
-		w.Warm(e.ctx) // her session opens while the utterance ends (it had closed asleep: ~1 s, more when its handle expired)
+		w.Warm(e.ctx) // her session opens while the utterance ends (it had closed asleep: ~0.5 s, now and then 5.4)
+		if e.cfg.MindLinger > 0 {
+			e.closeAsleep() // a name the words then deny: closed again later
+		}
 	}
 }
 
@@ -813,12 +824,32 @@ func (e *Engine) awakeChanged() {
 		e.awake = a
 		e.Log("attention", map[string]any{"awake": a})
 	}
-	if !e.awake && !e.replying && e.mind.Connected() {
-		// asleep and her goodbye played: close the session (the Live API has no sleep); a wake or
-		// an urgent NOTE resumes it with its handle, the conversation's context intact
-		e.mind.Close()
-		e.Log("mind_closed_asleep", nil)
+	if e.awake {
+		e.linger++ // a close armed while asleep: not any more
+		return
 	}
+	if !e.replying {
+		e.closeAsleep()
+	}
+}
+
+// closeAsleep: asleep and her goodbye played: her session is closed (the Live API has no sleep),
+// after cfg.MindLinger; a wake or an urgent NOTE resumes it with its handle, the conversation's
+// context intact.
+func (e *Engine) closeAsleep() {
+	e.linger++
+	n := e.linger
+	shut := func(e *Engine) {
+		if n == e.linger && !e.Attn.Awake() && !e.replying && e.mind.Connected() {
+			e.mind.Close()
+			e.Log("mind_closed_asleep", nil)
+		}
+	}
+	if e.cfg.MindLinger <= 0 {
+		shut(e)
+		return
+	}
+	time.AfterFunc(e.cfg.MindLinger, func() { e.Ctl <- shut })
 }
 
 // ---- control (plugins) ----------------------------------------------------------------

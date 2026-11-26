@@ -56,6 +56,9 @@ type Voice struct {
 	nextID int
 	open   []*turnRec // sent and not yet closed, oldest first
 	ctxq   []ctxLine  // what SOURCES reported since the last turn: sent with the next one
+	// warming: a session being opened by Warm (closed when it is in place or failed); the lock is
+	// not held while it dials (the dialog must not wait on the network: pero, 2026-11-26, 5.4 s)
+	warming chan struct{}
 }
 
 type turnRec struct {
@@ -104,16 +107,45 @@ func (v *Voice) connect(ctx context.Context) error {
 }
 
 // Warm opens the session ahead of a turn (her name heard: the turn follows in a second), in the
-// background; Turn waits for it (the lock). A session already open is left as it is.
+// background and without holding the lock while it dials; Turn waits for it. A session already
+// open, or being opened, is left as it is.
 func (v *Voice) Warm(ctx context.Context) {
+	v.mu.Lock()
+	if v.sess != nil || v.warming != nil {
+		v.mu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	v.warming = done
+	cfg, resumed := v.config(), v.handle != ""
+	v.mu.Unlock()
 	go func() {
+		defer close(done)
+		t := time.Now()
+		s, err := v.Client.Live.Connect(ctx, v.Model, cfg)
+		if err != nil && resumed {
+			v.Log("voice_resume_failed", map[string]any{"err": err.Error(), "warm": true})
+			v.mu.Lock()
+			v.handle = ""
+			cfg, resumed = v.config(), false
+			v.mu.Unlock()
+			s, err = v.Client.Live.Connect(ctx, v.Model, cfg)
+		}
 		v.mu.Lock()
 		defer v.mu.Unlock()
-		if v.sess == nil {
-			if err := v.connect(ctx); err != nil {
-				v.Log("voice_warm_failed", map[string]any{"err": err.Error()})
-			}
+		v.warming = nil
+		if err != nil {
+			v.Log("voice_warm_failed", map[string]any{"err": err.Error()})
+			return
 		}
+		if v.sess != nil { // opened meanwhile: this one is not needed
+			s.Close()
+			return
+		}
+		v.gen++
+		v.sess, v.goAway, v.open = s, false, nil
+		v.Log("voice_connected", map[string]any{"ms": time.Since(t).Milliseconds(), "model": v.Model, "resumed": resumed, "warm": true})
+		go v.receive(ctx, s, v.gen)
 	}()
 }
 
@@ -125,7 +157,15 @@ func (v *Voice) Connect(ctx context.Context) error {
 
 // Turn sends one text turn and returns its id.
 func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
-	v.mu.Lock()
+	for { // a session Warm is opening: wait for it, then use it
+		v.mu.Lock()
+		w := v.warming
+		if w == nil {
+			break
+		}
+		v.mu.Unlock()
+		<-w
+	}
 	defer v.mu.Unlock()
 	// a session told to go away is replaced between turns (the handle keeps the context)
 	if v.sess == nil || (v.goAway && len(v.open) == 0) {
