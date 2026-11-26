@@ -174,6 +174,7 @@ type Engine struct {
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
 	linger  int            // the asleep close armed last (a wake disarms it)
+	after   string         // words that came with a bare name while she answered it: her next turn
 	bare    map[int]bool   // seq → her name alone, woken to at its end (its transcript adds only the rest)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
 	interim string
@@ -432,6 +433,11 @@ func (e *Engine) onHeard(h live.Heard) {
 			return // the name she already woke to
 		}
 		text = strings.Join(rest, " ")
+		if e.replying { // her "Yes?" is under way: the words are her next turn, not dropped as busy
+			e.after = text
+			e.Log("bare_rest_queued", map[string]any{"seq": h.Seq, "text": text})
+			return
+		}
 	}
 	if said, ok := e.echoOf[h.Seq]; ok {
 		// a barge-in over her voice (or an utterance she spoke into): only the words she was
@@ -514,7 +520,7 @@ const lateEcho = 10 * time.Second
 const minNameVoiced, maxNameVoiced = 250 * time.Millisecond, 2 * time.Second
 
 // maxBareName: the voice of a name said alone ("Nina", "Hey Nina"); longer, the words go to the transcriber
-const maxBareName = 1100 * time.Millisecond
+const maxBareName = 800 * time.Millisecond // names alone: 0.34-0.56 s; "Nina, what time is it?" from Paradee 1.0 s
 
 // bareName: what a bare name is taken to have said (she wakes on it)
 const bareName = "Nina"
@@ -753,6 +759,10 @@ func (e *Engine) finishReply() {
 	total := time.Since(e.sentT)
 	e.Log("reply_done", map[string]any{"said": strings.TrimSpace(e.said.String()), "audio": e.audioOut, "total_s": total.Seconds()})
 	e.awakeChanged()
+	if t := e.after; t != "" {
+		e.after = ""
+		e.dispatch(t, false)
+	}
 }
 
 // ---- notes from SOURCES ----------------------------------------------------------------

@@ -461,12 +461,30 @@ func TestBareName(t *testing.T) {
 	r2 := newRig(t, Config{StartAsleep: true, Wake: "local", Spotter: sp})
 	r2.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("pre")})
 	r2.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("nina")})
-	r2.e.onVad(audio.Event{Kind: audio.End, Voiced: 2 * time.Second, Pitched: 2 * time.Second})
+	r2.e.onVad(audio.Event{Kind: audio.End, Voiced: 1200 * time.Millisecond, Pitched: time.Second})
 	if len(r2.mind.turns) != 0 || r2.has("bare_name") {
 		t.Fatalf("a sentence taken as a bare name: %v", r2.mind.turns)
 	}
 	r2.e.onHeard(live.Heard{Seq: r2.e.seq, Text: "Nina, what time is it?", Final: true})
 	if len(r2.mind.turns) != 1 {
 		t.Fatalf("the sentence lost: %v", r2.mind.turns)
+	}
+}
+
+// A sentence short enough to pass for a bare name: her "Yes?" first, then the words as her next turn
+// (they had been dropped as busy).
+func TestBareNameRest(t *testing.T) {
+	sp := &fakeSpotter{on: map[string]bool{"nina": true}}
+	r := newRig(t, Config{StartAsleep: true, Wake: "local", Spotter: sp})
+	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("pre")})
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("nina")})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 700 * time.Millisecond, Pitched: 500 * time.Millisecond})
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Text: "Nina, what time is it?", Final: true})
+	if len(r.mind.turns) != 1 || !r.has("bare_rest_queued") {
+		t.Fatalf("the rest not queued: %v", r.mind.turns)
+	}
+	r.reply("Yes?")
+	if len(r.mind.turns) != 2 || !strings.Contains(r.mind.turns[1], "what time is it") {
+		t.Fatalf("the rest not her next turn: %v", r.mind.turns)
 	}
 }
