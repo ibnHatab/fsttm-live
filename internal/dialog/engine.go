@@ -635,7 +635,8 @@ func (e *Engine) send(text string) {
 		e.Log("floor_refused", map[string]any{"err": err.Error(), "text": text})
 		return
 	}
-	turn := e.cutNote + text
+	note := e.cutNote // for her, not the person's words: the log's "context", not its "text" (her screens draw the text)
+	turn := note + text
 	e.cutNote = ""
 	e.beginReply()
 	id, err := e.mind.Turn(e.ctx, turn)
@@ -645,7 +646,11 @@ func (e *Engine) send(text string) {
 		return
 	}
 	e.turnID = id
-	e.Log("turn", map[string]any{"turn": id, "text": turn, "after_end_ms": time.Since(e.uttEnd).Milliseconds()})
+	d := map[string]any{"turn": id, "text": text, "after_end_ms": time.Since(e.uttEnd).Milliseconds()}
+	if note != "" {
+		d["context"] = strings.TrimSpace(note)
+	}
+	e.Log("turn", d)
 }
 
 func (e *Engine) beginReply() {

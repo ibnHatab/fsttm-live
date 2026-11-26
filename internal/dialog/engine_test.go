@@ -8,6 +8,7 @@ import (
 
 	"github.com/ibnHatab/fsttm-live/internal/audio"
 	"github.com/ibnHatab/fsttm-live/internal/live"
+	"github.com/ibnHatab/fsttm/go/pkg/attention"
 	"github.com/ibnHatab/fsttm/go/pkg/fsm"
 )
 
@@ -59,12 +60,17 @@ type rig struct {
 	spk  *fakeSpk
 	evs  []string
 	told []bool // each "attention" to asleep: whether she was told
+	// each "turn" event's text (what her screens draw)
+	turnTexts []string
 }
 
 func newRig(t *testing.T, cfg Config) *rig {
 	r := &rig{ears: &fakeEars{}, mind: &fakeMind{}, spk: &fakeSpk{}}
 	r.e = New(cfg, r.ears, r.mind, r.spk, nil, func(k string, f map[string]any) {
 		r.evs = append(r.evs, k)
+		if k == "turn" {
+			r.turnTexts = append(r.turnTexts, f["text"].(string))
+		}
 		if k == "attention" && f["awake"] == false {
 			r.told = append(r.told, f["told"] == true)
 		}
@@ -155,6 +161,9 @@ func TestBargeIn(t *testing.T) {
 	r.e.onHeard(live.Heard{Seq: seq, Text: "Stop, which one is on?", Final: true})
 	if len(r.mind.turns) != 2 || !strings.HasPrefix(r.mind.turns[1], "(You were interrupted") {
 		t.Fatalf("turn after barge-in: %q", r.mind.turns)
+	}
+	if s := r.turnTexts[len(r.turnTexts)-1]; strings.HasPrefix(s, "(") {
+		t.Fatalf("the turn event's text carries her note: %q", s)
 	}
 	r.e.onSpkDone(false) // the cut player exiting must not release the new reply
 	if !r.e.replying || r.e.Turn.State != fsm.System {
