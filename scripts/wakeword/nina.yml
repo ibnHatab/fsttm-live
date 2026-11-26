@@ -1,0 +1,30 @@
+# Nina's wake word: openWakeWord's train.py config (fsttm-live scripts/wakeword, 2026-11-26). The clips are
+# gen_clips.py's (Paradee's four voices, speeds 0.7–1.4, pitch ±12 %), so train.py runs from --augment_clips:
+#   python openWakeWord/openwakeword/train.py --training_config nina.yml --augment_clips
+#   python openWakeWord/openwakeword/train.py --training_config nina.yml --train_model
+# Paths are relative to ~/work/oww (data/: openWakeWord's features, the MIT room responses, AudioSet, FMA).
+model_name: nina
+target_phrase: ["nina"]
+custom_negative_phrases: []
+n_samples: 8000
+n_samples_val: 1000
+tts_batch_size: 50
+augmentation_batch_size: 16
+piper_sample_generator_path: ./piper-sample-generator   # unused: the clips are Paradee's
+output_dir: ./nina
+rir_paths: [./data/mit_rirs]
+background_paths: [./data/audioset_16k, ./data/fma]
+background_paths_duplication_rate: [1, 1]
+false_positive_validation_data_path: ./data/validation_set_features.npy
+augmentation_rounds: 2          # each clip twice, differently: more rooms and noises per voice (four voices only)
+feature_data_files:
+  ACAV100M_sample: ./data/openwakeword_features_ACAV100M_2000_hrs_16bit.npy
+batch_n_per_class:
+  ACAV100M_sample: 1024
+  adversarial_negative: 50
+  positive: 50
+model_type: dnn
+layer_size: 32
+steps: 50000
+max_negative_weight: 1500
+target_false_positives_per_hour: 0.2
