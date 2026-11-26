@@ -117,7 +117,13 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 			home, _ := os.UserHomeDir()
 			dir = filepath.Join(home, dir[2:])
 		}
-		mux.Handle("GET "+prefix, http.StripPrefix(prefix, http.FileServer(http.Dir(dir))))
+		fsrv := http.StripPrefix(prefix, http.FileServer(http.Dir(dir)))
+		mux.Handle("GET "+prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// revalidated each time (a 304 when unchanged): her screen kept an old shell and card after
+			// an update, as long as the browser's own guess said (2026-11-26)
+			w.Header().Set("Cache-Control", "no-cache")
+			fsrv.ServeHTTP(w, r)
+		}))
 	}
 	w.facts = map[string]map[string]any{}
 	evs0, cancel0 := h.Subscribe() // the sticky kinds' last events
