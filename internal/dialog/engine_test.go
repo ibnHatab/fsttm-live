@@ -570,3 +570,16 @@ func TestSilentAfterTool(t *testing.T) {
 		t.Fatalf("a follow-up after words: %q", r.mind.turns)
 	}
 }
+
+// a reply that timed out after a tool call: no follow-up (the model answered nothing; another turn
+// would only wait again)
+func TestNoFollowUpAfterTimeout(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 10 * time.Second, ReplyTimeout: time.Millisecond})
+	r.utter("Nina, what alarms do I have")
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindTool, Text: "home_timers"})
+	time.Sleep(5 * time.Millisecond)
+	r.e.onTick()
+	if !r.has("no_reply") || r.has("silent_after_tool") || len(r.mind.turns) != 1 {
+		t.Fatalf("after a timeout: %v %q", r.evs, r.mind.turns)
+	}
+}

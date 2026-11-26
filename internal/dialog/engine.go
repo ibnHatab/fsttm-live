@@ -898,6 +898,7 @@ func (e *Engine) onTick() {
 	if e.replying && !e.audioOut && e.cfg.ReplyTimeout > 0 && time.Since(e.sentT) > e.cfg.ReplyTimeout {
 		e.Log("no_reply", map[string]any{"waited_s": time.Since(e.sentT).Seconds()})
 		e.mind.Cancel(e.turnID)
+		e.toolUsed = false // no answer at all, not a silent one: no follow-up to wait for as well
 		e.finishReply()
 	}
 	e.awakeChanged()
