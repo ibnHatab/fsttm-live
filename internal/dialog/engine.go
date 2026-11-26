@@ -319,6 +319,12 @@ func (e *Engine) onVad(ev audio.Event) {
 			e.ears.Audio(ev.PCM)
 		}
 	case audio.Barge: // a voice over hers, above her echo: she yields at once (ducks), the words decide
+		if !e.firstT.IsZero() && time.Since(e.firstT) < bargeGrace {
+			// her reply's first moments: a software canceller re-learns her echo after a silence (pero,
+			// 2026-11-26: -32 dBFS in a reply's first 0.5 s, then under -55): no telling it from a person
+			e.Log("barge_onset_ignored", map[string]any{"seq": e.seq, "since_audio_ms": time.Since(e.firstT).Milliseconds()})
+			return
+		}
 		if d, ok := e.spk.(interface{ Duck(bool) }); ok && e.open && e.tent[e.seq] && e.speaking.Load() != 0 {
 			d.Duck(true)
 			e.duckSeq = e.seq
@@ -520,6 +526,9 @@ const lateEcho = 10 * time.Second
 const minNameVoiced, maxNameVoiced = 250 * time.Millisecond, 2 * time.Second
 
 // maxBareName: the voice of a name said alone ("Nina", "Hey Nina"); longer, the words go to the transcriber
+// bargeGrace: no duck this long after her reply's first audio (her echo while the canceller adapts)
+const bargeGrace = 700 * time.Millisecond
+
 const maxBareName = 800 * time.Millisecond // names alone: 0.34-0.56 s; "Nina, what time is it?" from Paradee 1.0 s
 
 // bareName: what a bare name is taken to have said (she wakes on it)

@@ -420,6 +420,11 @@ func TestBargeDuck(t *testing.T) {
 	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindSaid, Text: "The moon is reaching perigee today, its closest point to Earth."})
 	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindAudio, PCM: make([]byte, 4800)})
 	r.e.onVad(audio.Event{Kind: audio.Start})
+	r.e.onVad(audio.Event{Kind: audio.Barge}) // in her reply's first moments: her echo, not ducked
+	if r.spk.ducked || !r.has("barge_onset_ignored") {
+		t.Fatal("ducked in the reply's first moments")
+	}
+	r.e.firstT = time.Now().Add(-time.Second) // a second into her reply
 	r.e.onVad(audio.Event{Kind: audio.Barge})
 	if !r.spk.ducked {
 		t.Fatal("not ducked on a voice over hers")

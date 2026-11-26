@@ -175,6 +175,36 @@ func (s *Speaker) level(pcm []byte) float64 {
 }
 
 // scale is pcm (s16le) at the gain, a copy.
+// fade: her voice's gain moves toward the duck's (or back) within two 20 ms pieces, ramped across
+// each: a step of 12 dB at once was heard as a click (pero, 2026-11-26).
+type fade struct{ g float64 }
+
+func (f *fade) apply(p []byte, ducked bool) []byte {
+	to := 1.0
+	if ducked {
+		to = DuckGain
+	}
+	if f.g == 0 {
+		f.g = 1
+	}
+	g0, g1 := f.g, to
+	if d := 0.5 * (1 - DuckGain); math.Abs(g1-g0) > d {
+		g1 = g0 + math.Copysign(d, g1-g0)
+	}
+	f.g = g1
+	if g0 == 1 && g1 == 1 {
+		return p
+	}
+	out := make([]byte, len(p)&^1)
+	n := len(out) / 2
+	for i := 0; i < n; i++ {
+		g := g0 + (g1-g0)*float64(i)/float64(max(n, 1))
+		v := float64(int16(binary.LittleEndian.Uint16(p[2*i:]))) * g
+		binary.LittleEndian.PutUint16(out[2*i:], uint16(int16(math.Max(-32768, math.Min(32767, v)))))
+	}
+	return out
+}
+
 func scale(pcm []byte, g float64) []byte {
 	out := make([]byte, len(pcm)&^1)
 	for i := 0; i+1 < len(pcm); i += 2 {
@@ -219,12 +249,10 @@ func (s *Speaker) openRemote(sink func([]byte)) *reply {
 	go func() {
 		const piece = 960 // 20 ms at 24 kHz
 		played := 0
+		var fd fade
 		for b := range q {
 			for i := 0; i < len(b); i += piece {
-				p := b[i:min(len(b), i+piece)]
-				if s.ducked.Load() {
-					p = scale(p, DuckGain)
-				}
+				p := fd.apply(b[i:min(len(b), i+piece)], s.ducked.Load())
 				s.mu.Lock()
 				cut := r.cut
 				s.mu.Unlock()
@@ -284,14 +312,12 @@ func (s *Speaker) open() *reply {
 	r := &reply{cmd: cmd, q: make(chan []byte, 8192), start: time.Now()}
 	q := r.q // Finish and Cut set r.q to nil once closed: the goroutine may start after that
 	go func(w io.WriteCloser) {
-		const piece = 960 // 20 ms at 24 kHz: the duck applies from the next piece
+		const piece = 960 // 20 ms at 24 kHz: the duck applies from the next piece, faded over two
+		var fd fade
 	out:
 		for b := range q {
 			for i := 0; i < len(b); i += piece {
-				p := b[i:min(len(b), i+piece)]
-				if s.ducked.Load() {
-					p = scale(p, DuckGain)
-				}
+				p := fd.apply(b[i:min(len(b), i+piece)], s.ducked.Load())
 				if _, err := w.Write(p); err != nil {
 					break out
 				}
