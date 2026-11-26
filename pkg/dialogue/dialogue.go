@@ -615,6 +615,19 @@ func (n *Dialogue) spotter(cfg *config.Config, ev func(string, map[string]any)) 
 		}
 		n.wake = oww.NewStream(d, label, th, ev)
 		ev("kws_ready", map[string]any{"mode": w.Mode, "engine": "oww", "threshold": th})
+		if w.KWS != "" { // sherpa's spotter too, per utterance: her name before a sentence
+			kt := w.KWSThreshold
+			if kt <= 0 {
+				kt = 0.25
+			}
+			k, err := kws.New(cfg.Expand(w.KWS), cfg.Expand(w.Keywords), kt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "wake: sherpa's spotter did not load (%v): openWakeWord alone\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "wake: openWakeWord, %s, threshold %.2f, listening continuously; and sherpa's spotter per utterance (threshold %.2f)\n", cfg.Expand(w.Word), th, kt)
+				return dialog.Spotters{n.wake, k}
+			}
+		}
 		fmt.Fprintf(os.Stderr, "wake: openWakeWord, %s, threshold %.2f, listening continuously\n", cfg.Expand(w.Word), th)
 		return n.wake
 	}

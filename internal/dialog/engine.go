@@ -111,6 +111,36 @@ type Spotter interface {
 	End() string
 }
 
+// Spotters: several spotters, the first one's keyword (openWakeWord hears a bare name warm, sherpa's
+// spotter her name before a sentence: 2026-11-26, pero, "Nina, what time is it?" 0.02 to the first).
+type Spotters []Spotter
+
+func (s Spotters) Begin() {
+	for _, k := range s {
+		k.Begin()
+	}
+}
+
+func (s Spotters) Feed(pcm []byte) string {
+	hit := ""
+	for _, k := range s {
+		if h := k.Feed(pcm); hit == "" {
+			hit = h
+		}
+	}
+	return hit
+}
+
+func (s Spotters) End() string {
+	hit := ""
+	for _, k := range s {
+		if h := k.End(); hit == "" {
+			hit = h
+		}
+	}
+	return hit
+}
+
 type Engine struct {
 	cfg  Config
 	Turn *fsm.Model

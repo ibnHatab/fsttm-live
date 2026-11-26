@@ -50,13 +50,15 @@ type Config struct {
 		NoteGap     time.Duration `yaml:"note_gap"`
 		MindLinger  time.Duration `yaml:"mind_linger"` // asleep, her session stays open this long (0: 10 min; a wake soon after needs no new one)
 		Wake        struct {
-			Mode      string  `yaml:"mode"`   // cloud | shadow | local
-			Engine    string  `yaml:"engine"` // kws (sherpa-onnx's keyword spotter, per utterance) | oww (openWakeWord, continuous)
-			Model     string  `yaml:"model"`  // kws: the model's folder; oww: the folder of melspectrogram.onnx and embedding_model.onnx
-			Keywords  string  `yaml:"keywords"`
-			Word      string  `yaml:"word"`  // oww: the wake word's model (.onnx)
-			Label     string  `yaml:"label"` // oww: its keyword's name in the log (NINA)
-			Threshold float32 `yaml:"threshold"`
+			Mode         string  `yaml:"mode"`   // cloud | shadow | local
+			Engine       string  `yaml:"engine"` // kws (sherpa-onnx's keyword spotter, per utterance) | oww (openWakeWord, continuous)
+			Model        string  `yaml:"model"`  // kws: the model's folder; oww: the folder of melspectrogram.onnx and embedding_model.onnx
+			Keywords     string  `yaml:"keywords"`
+			Word         string  `yaml:"word"` // oww: the wake word's model (.onnx)
+			KWS          string  `yaml:"kws"`  // oww: sherpa's spotter alongside (its model's folder; keywords, kws_threshold): her name before a sentence
+			KWSThreshold float32 `yaml:"kws_threshold"`
+			Label        string  `yaml:"label"` // oww: its keyword's name in the log (NINA)
+			Threshold    float32 `yaml:"threshold"`
 		} `yaml:"wake"`
 	} `yaml:"dialog"`
 	Prefs   Prefs                `yaml:"prefs"`
