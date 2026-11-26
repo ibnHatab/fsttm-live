@@ -174,7 +174,7 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux.HandleFunc("POST /api/prefs", func(rw http.ResponseWriter, r *http.Request) {
 		var patch map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			http.Error(rw, err.Error(), http.StatusBadRequest)
+			jsonError(rw, err)
 			return
 		}
 		// the patch is checked on a copy first: a bad one changes nothing
@@ -193,12 +193,12 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 		}
 		trial := h.Prefs()
 		if err := apply(&trial); err != nil {
-			http.Error(rw, err.Error(), http.StatusBadRequest)
+			jsonError(rw, err)
 			return
 		}
 		p, err := h.SetPrefs(func(p *config.Prefs) { apply(p) })
 		if err != nil {
-			http.Error(rw, err.Error(), http.StatusBadRequest)
+			jsonError(rw, err)
 			return
 		}
 		writeJSON(rw, p)
@@ -206,11 +206,11 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	mux.HandleFunc("POST /api/do", func(rw http.ResponseWriter, r *http.Request) {
 		var a struct{ Action, Arg string }
 		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
-			http.Error(rw, err.Error(), http.StatusBadRequest)
+			jsonError(rw, err)
 			return
 		}
 		if err := h.Do(a.Action, a.Arg); err != nil {
-			http.Error(rw, err.Error(), http.StatusBadRequest)
+			jsonError(rw, err)
 			return
 		}
 		writeJSON(rw, h.Status())
@@ -337,6 +337,14 @@ func (w *Web) Run(ctx context.Context, h plugin.Host) error {
 	srv := &http.Server{Handler: w.cors(mux)}
 	go func() { <-ctx.Done(); srv.Close() }()
 	return srv.Serve(ln)
+}
+
+// jsonError: an API's error as JSON ({"error": …}, status 400): her cards read every answer as JSON
+// (a plain-text error was "Unexpected token 's'… is not valid JSON" on the bubble card, 2026-11-26).
+func jsonError(rw http.ResponseWriter, err error) {
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(rw).Encode(map[string]string{"error": err.Error()})
 }
 
 func writeJSON(rw http.ResponseWriter, v any) {

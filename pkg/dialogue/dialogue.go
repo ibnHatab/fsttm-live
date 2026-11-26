@@ -347,9 +347,12 @@ func (n *Dialogue) Do(action, arg string) error {
 			return err
 		}
 		n.spk.Sample()
-	case "sample":
+	case "sample": // her last words again, at the bubble's level; nothing said yet (a restart): a line of hers
+		if n.Engine.Status().Speaking {
+			return fmt.Errorf("sample: she is speaking")
+		}
 		if !n.spk.Sample() {
-			return fmt.Errorf("sample: nothing said yet, or she is speaking")
+			n.Engine.Do(func(e *dialog.Engine) { e.TypeLine("/say " + sampleLine) })
 		}
 	case "bubble_here": // the distance calibration: arg the person's distance in metres
 		d, err := strconv.ParseFloat(strings.TrimSpace(arg), 64)
@@ -583,6 +586,9 @@ func (n *Dialogue) Note(level, text string) error {
 	n.Engine.Notes <- dialog.Note{Level: lv, Text: text}
 	return nil
 }
+
+// sampleLine: what she says for the bubble's replay when she has said nothing yet
+const sampleLine = "This is how loud I am from here. Is it comfortable?"
 
 // linger: how long her session stays open asleep (10 min unless set).
 func linger(d time.Duration) time.Duration {

@@ -4,7 +4,7 @@ import { toggleSwitch, keyMatch } from './vendor/switch.js';
 const $ = id => document.getElementById(id);
 const api = async (path, body) => {
   const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) { const t = await r.text(); let m = t; try { m = JSON.parse(t).error || t; } catch {} throw new Error(m); }
   return r.json();
 };
 const act = (action, arg = '') => api('/api/do', { action, arg }).catch(e => event_('error: ' + e.message, true));
