@@ -32,6 +32,9 @@ type Heard struct {
 	Late  bool
 	// Interim, on the final: the last interim text, when the final differs (the log's)
 	Interim string
+	// Refused, on an empty final: the transcriber answered instead of transcribing (Refusal): someone
+	// spoke, the words are not known
+	Refused bool
 }
 
 // Ears is gemini-3.5-transcribe-live in manual activity: we send activityStart, the
@@ -188,13 +191,15 @@ func (e *Ears) loop(ctx context.Context) {
 		finalSent  bool
 		lastSeg    string
 		lastEcho   string
+		refused    bool // the utterance's text so far is a refusal
 	)
 	seg := func() string {
 		s, fresh := Cut(full, base)
 		if fresh {
 			base = "" // the transcriber began this utterance's text anew: what follows is all of it
 		}
-		if VocabEcho(s, e.Vocab) || Refusal(s) {
+		refused = Refusal(s)
+		if VocabEcho(s, e.Vocab) || refused {
 			if s != lastEcho {
 				lastEcho = s
 				e.Log(map[bool]string{true: "vocab_echo", false: "ears_refusal"}[VocabEcho(s, e.Vocab)], map[string]any{"text": s})
@@ -222,7 +227,7 @@ func (e *Ears) loop(ctx context.Context) {
 	}
 	emitFinal := func() {
 		final, finalSent = seg(), true
-		h := Heard{Seq: seq, Text: final, Final: true}
+		h := Heard{Seq: seq, Text: final, Final: true, Refused: final == "" && refused}
 		if final != lastSeg {
 			h.Interim = lastSeg
 		}
@@ -255,7 +260,7 @@ func (e *Ears) loop(ctx context.Context) {
 					e.Out <- Heard{Seq: c.seq, Final: true} // nothing will be heard
 					continue
 				}
-				seq, open, finalSent, lastSeg, base = c.seq, true, false, "", full
+				seq, open, finalSent, lastSeg, base, refused = c.seq, true, false, "", full, false
 				ended, changed = time.Time{}, time.Now()
 				sess.SendRealtimeInput(genai.LiveRealtimeInput{ActivityStart: &genai.ActivityStart{}})
 			case 1:

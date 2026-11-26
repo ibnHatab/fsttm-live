@@ -460,7 +460,21 @@ func (e *Engine) onHeard(h live.Heard) {
 		text = StripEcho(text, said)
 		e.Log("echo_stripped", map[string]any{"seq": h.Seq, "heard": h.Text, "kept": text})
 	}
-	if strings.TrimSpace(text) == "" || e.phantomName(h.Seq, text) {
+	if strings.TrimSpace(text) == "" {
+		// the transcriber refused what was said to her (awake, or her name in it): she asks for it
+		// again, rather than nothing at all (2026-11-26: "Nina, show me the album Nina's gallery.")
+		if h.Refused && !e.replying && (e.Attn.Awake() || (h.Seq == e.seq && e.kwsHit != "")) {
+			if !e.Attn.Awake() {
+				e.Attn.OnUtterance("nina")
+			}
+			e.Log("unclear", map[string]any{"seq": h.Seq})
+			e.cutNote = "(The person spoke to you, but their words could not be made out. Ask them, in a few words, to say it again.)\n"
+			e.send("")
+			e.awakeChanged()
+		}
+		return
+	}
+	if e.phantomName(h.Seq, text) {
 		return
 	}
 	if !e.replying && !e.lastSpoke.IsZero() && time.Since(e.lastSpoke) < lateEcho && len(words(text)) >= 3 &&

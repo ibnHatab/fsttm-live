@@ -98,7 +98,7 @@ const handlers = {
   turn: e => {
     if (e.note) msg('note', e.text.replace(/^NOTE \((\w+)\): /, 'note ($1): '));
     else if (/^SAY: /.test(e.text)) { /* her own words handed to her voice (a narration): shown as her reply */ }
-    else if (!e.typed_shown) msg('user', e.text.replace(/^\(You were interrupted[^)]*\)\n/, ''));
+    else if (!e.typed_shown && e.text.trim()) msg('user', e.text.replace(/^\(You were interrupted[^)]*\)\n/, '')); // empty: only her note (words not made out)
     ninaMsg = null; said = '';
   },
   said: e => { said += e.text; if (!ninaMsg) ninaMsg = msg('nina', ''); ninaMsg.textContent = said.trim(); },

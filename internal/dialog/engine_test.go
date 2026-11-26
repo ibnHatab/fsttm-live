@@ -521,3 +521,27 @@ func TestBareNameRest(t *testing.T) {
 		t.Fatalf("the rest not her next turn: %v", r.mind.turns)
 	}
 }
+
+// the transcriber refused what was said to her: she asks for it again (a turn with only her note;
+// its event's text empty); not addressed, or not refused: nothing
+func TestUnclear(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 10 * time.Second})
+	r.utter("Nina, hi")
+	r.reply("Hi!")
+	r.e.onVad(audio.Event{Kind: audio.Start})
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Final: true, Refused: true})
+	if len(r.mind.turns) != 2 || !strings.HasPrefix(r.mind.turns[1], "(The person spoke to you") || !r.has("unclear") {
+		t.Fatalf("refused: %q", r.mind.turns)
+	}
+	if s := r.turnTexts[len(r.turnTexts)-1]; s != "" {
+		t.Fatalf("the turn event's text: %q", s)
+	}
+	r.reply("Sorry, say that again?")
+	r.e.onVad(audio.Event{Kind: audio.Start})
+	r.e.onVad(audio.Event{Kind: audio.End})
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Final: true}) // nothing said
+	if len(r.mind.turns) != 2 {
+		t.Fatalf("nothing said, a turn: %q", r.mind.turns)
+	}
+}
