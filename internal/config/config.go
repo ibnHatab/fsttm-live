@@ -47,9 +47,12 @@ type Config struct {
 		StartAsleep bool          `yaml:"start_asleep"`
 		NoteGap     time.Duration `yaml:"note_gap"`
 		Wake        struct {
-			Mode      string  `yaml:"mode"` // cloud | shadow | local
-			Model     string  `yaml:"model"`
+			Mode      string  `yaml:"mode"`   // cloud | shadow | local
+			Engine    string  `yaml:"engine"` // kws (sherpa-onnx's keyword spotter, per utterance) | oww (openWakeWord, continuous)
+			Model     string  `yaml:"model"`  // kws: the model's folder; oww: the folder of melspectrogram.onnx and embedding_model.onnx
 			Keywords  string  `yaml:"keywords"`
+			Word      string  `yaml:"word"`  // oww: the wake word's model (.onnx)
+			Label     string  `yaml:"label"` // oww: its keyword's name in the log (NINA)
 			Threshold float32 `yaml:"threshold"`
 		} `yaml:"wake"`
 	} `yaml:"dialog"`

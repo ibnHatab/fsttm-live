@@ -32,6 +32,7 @@ import (
 	"github.com/ibnHatab/fsttm-live/internal/evlog"
 	"github.com/ibnHatab/fsttm-live/internal/kws"
 	"github.com/ibnHatab/fsttm-live/internal/live"
+	"github.com/ibnHatab/fsttm-live/internal/oww"
 	"github.com/ibnHatab/fsttm-live/internal/paradee"
 	"github.com/ibnHatab/fsttm-live/internal/plugin"
 	"github.com/ibnHatab/fsttm-live/internal/rhvoice"
@@ -93,6 +94,7 @@ type Dialogue struct {
 	fclosed   bool
 	rbuf      []byte
 	capt      *audio.Capture
+	wake      *oww.Stream // openWakeWord, fed every frame (wake.engine: oww)
 }
 
 func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (*Dialogue, error) {
@@ -131,7 +133,7 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 		ReplyTimeout: 10 * time.Second, Knob: knob, NoteGap: cfg.Dialog.NoteGap,
 		Silent: !cfg.Prefs.Voice, StartAsleep: cfg.Dialog.StartAsleep,
 		Outlast: cfg.Audio.Hang + 600*time.Millisecond,
-		Wake:    cfg.Dialog.Wake.Mode, Spotter: spotter(cfg, log.Ev)}, n.Ears, n.Mind, spk, nil, log.Ev)
+		Wake:    cfg.Dialog.Wake.Mode, Spotter: n.spotter(cfg, log.Ev)}, n.Ears, n.Mind, spk, nil, log.Ev)
 	if t := localVoice(cfg.Prefs); t != nil {
 		n.Engine.SetLocal(t)
 	}
@@ -225,9 +227,22 @@ func (n *Dialogue) Run(ctx context.Context) error {
 	case margin == 0:
 		margin = 12 // scripts/calib: her echo ~22 dB under the reference, a person ~3 dB
 	}
-	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 300 * time.Millisecond, BargeMargin: margin,
+	ep := &audio.Endpointer{Mode: a.VADMode, On: 6, Hang: a.Hang, PreRoll: 500 * time.Millisecond, BargeMargin: margin,
 		MaxUtt: a.MaxUtt, Muted: func() bool { return n.muted.Load() && !n.remoteMic.Load() }}
-	go ep.Run(frames, n.Engine.Vad)
+	epIn := frames
+	if n.wake != nil { // the wake word hears every frame, utterance or not (not while the mic is off)
+		epIn = make(chan audio.Frame, 64)
+		go func(out chan<- audio.Frame) {
+			for f := range frames {
+				if !n.muted.Load() || n.remoteMic.Load() {
+					n.wake.Hear(f.PCM)
+				}
+				out <- f
+			}
+			close(out)
+		}(epIn)
+	}
+	go ep.Run(epIn, n.Engine.Vad)
 	n.Ev.Ev("ready", map[string]any{"mind": n.Cfg.Models.Mind, "ears": n.Cfg.Models.Ears, "config": n.Cfg.Path(), "prefs": n.Prefs()})
 	n.Engine.Run(ctx)
 	return nil
@@ -571,10 +586,27 @@ func (n *Dialogue) Note(level, text string) error {
 
 // spotter loads the local wake word unless the mode is the cloud's; a model that does not load
 // leaves the cloud's.
-func spotter(cfg *config.Config, ev func(string, map[string]any)) dialog.Spotter {
+func (n *Dialogue) spotter(cfg *config.Config, ev func(string, map[string]any)) dialog.Spotter {
 	w := cfg.Dialog.Wake
 	if w.Mode == "" || w.Mode == "cloud" {
 		return nil
+	}
+	if w.Engine == "oww" {
+		d, err := oww.New(cfg.Expand(w.Model), cfg.Expand(w.Word))
+		if err != nil {
+			ev("kws_error", map[string]any{"err": err.Error()})
+			return nil
+		}
+		th, label := w.Threshold, w.Label
+		if th <= 0 {
+			th = 0.5
+		}
+		if label == "" {
+			label = "NINA"
+		}
+		n.wake = oww.NewStream(d, label, th, ev)
+		ev("kws_ready", map[string]any{"mode": w.Mode, "engine": "oww", "threshold": th})
+		return n.wake
 	}
 	k, err := kws.New(cfg.Expand(w.Model), cfg.Expand(w.Keywords), w.Threshold)
 	if err != nil {
