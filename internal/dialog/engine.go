@@ -185,6 +185,9 @@ type Engine struct {
 	turnID    int  // the mind's id of that turn
 	mindDone  bool
 	audioOut  bool
+	toolUsed  bool // this reply called a tool
+	nudged    bool // this reply is the follow-up of a silent tool call: no second one
+	nudgeNext bool // send() is the follow-up's
 	sentT     time.Time
 	firstT    time.Time
 	said      strings.Builder
@@ -674,6 +677,7 @@ func (e *Engine) beginReply() {
 		e.echoOf[e.seq] = ""
 	}
 	e.replying, e.mindDone, e.audioOut = true, false, false
+	e.toolUsed, e.nudged, e.nudgeNext = false, e.nudgeNext, false
 	e.sentT, e.firstT = time.Now(), time.Time{}
 	if s := strings.TrimSpace(e.said.String()); s != "" {
 		e.prevSaid = s
@@ -734,6 +738,7 @@ func (e *Engine) onMind(m live.MindEvent) {
 			e.speakLocal(false)
 		}
 	case live.MindTool:
+		e.toolUsed = true
 		e.Log("mind_tool", map[string]any{"name": m.Text})
 	case live.MindInterrupted:
 		e.Log("mind_interrupted", nil)
@@ -792,6 +797,15 @@ func (e *Engine) finishReply() {
 	if t := e.after; t != "" {
 		e.after = ""
 		e.dispatch(t, false)
+		return
+	}
+	// a tool called and nothing said (pero, 2026-11-26: the model closed its turn after the screen
+	// tool's result, silent): once, she says what she did; not over the person, not asleep
+	if e.toolUsed && !e.nudged && !e.audioOut && strings.TrimSpace(e.said.String()) == "" && !e.open && e.Attn.Awake() {
+		e.Log("silent_after_tool", nil)
+		e.cutNote = "(You did that with your tool but said nothing. Tell the person, in a few words, what you did.)\n"
+		e.nudgeNext = true
+		e.send("")
 	}
 }
 

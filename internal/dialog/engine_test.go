@@ -545,3 +545,28 @@ func TestUnclear(t *testing.T) {
 		t.Fatalf("nothing said, a turn: %q", r.mind.turns)
 	}
 }
+
+// a tool called and nothing said: once, a follow-up turn for her to say what she did; it silent too:
+// no third; a tool called and words said: none
+func TestSilentAfterTool(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 10 * time.Second})
+	silent := func() {
+		r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindTool, Text: "screen"})
+		r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindDone})
+	}
+	r.utter("Nina, next photo")
+	silent()
+	if len(r.mind.turns) != 2 || !strings.HasPrefix(r.mind.turns[1], "(You did that with your tool") || !r.has("silent_after_tool") {
+		t.Fatalf("no follow-up: %q", r.mind.turns)
+	}
+	silent()
+	if len(r.mind.turns) != 2 {
+		t.Fatalf("a second follow-up: %q", r.mind.turns)
+	}
+	r.utter("next one")
+	r.e.onMind(live.MindEvent{Turn: r.e.turnID, Kind: live.MindTool, Text: "screen"})
+	r.reply("Here's the next one.")
+	if len(r.mind.turns) != 3 {
+		t.Fatalf("a follow-up after words: %q", r.mind.turns)
+	}
+}
