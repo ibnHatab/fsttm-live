@@ -43,6 +43,7 @@ func TestCut(t *testing.T) {
 		{"Next video.", "Nina, what time is it?", "Next video.", true}, // anew: no letters lost
 		{"Nina, stop the radio.", "Next video.", "Nina, stop the radio.", true},
 		{"Go to sleep.", "Nina, stop the radio.", "Go to sleep.", true},
+		{"Cancel the timer.", "Cancel the alarm.", "Cancel the timer.", true},                  // the same first words (pero)
 		{"Nina, what time is it? Next video.", "Nina, what time is it?", "Next video.", false}, // accumulated
 		{"Nina, what time is it.Next video.", "Nina, what time is it?", "Next video.", false},  // its end revised
 		{"", "", "", false},

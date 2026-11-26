@@ -168,7 +168,8 @@ func Cut(full, base string) (s string, fresh bool) {
 	for n < len(full) && n < len(base) && full[n] == base[n] {
 		n++
 	}
-	if 2*n < len(base) { // not a revision of base's end: a new text
+	if len(base)-n > 2 { // not a revision of base's last letters (its "?" rewritten "."): a new text ("Cancel the
+		// timer." after "Cancel the alarm.": 11 letters shared, then other words)
 		return strings.TrimSpace(full), true
 	}
 	return strings.TrimSpace(strings.TrimLeft(full[n:], " .,?!")), false // the revised end's punctuation is not the new words'
@@ -192,11 +193,17 @@ func (e *Ears) loop(ctx context.Context) {
 		lastSeg    string
 		lastEcho   string
 		refused    bool // the utterance's text so far is a refusal
+		freshMode  bool // this session's transcriber begins each utterance anew: its text is all of it
 	)
 	seg := func() string {
-		s, fresh := Cut(full, base)
-		if fresh {
-			base = "" // the transcriber began this utterance's text anew: what follows is all of it
+		var s string
+		if freshMode {
+			s = strings.TrimSpace(full)
+		} else {
+			var fresh bool
+			if s, fresh = Cut(full, base); fresh {
+				base, freshMode = "", true // anew once: anew for the rest of the session
+			}
 		}
 		refused = Refusal(s)
 		if VocabEcho(s, e.Vocab) || refused {
@@ -222,7 +229,7 @@ func (e *Ears) loop(ctx context.Context) {
 			sess = nil
 			return false
 		}
-		sess, born, full, base = s, time.Now(), "", ""
+		sess, born, full, base, freshMode = s, time.Now(), "", "", false
 		return true
 	}
 	emitFinal := func() {
