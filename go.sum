@@ -84,6 +84,8 @@ github.com/warthog618/go-gpiocdev v0.10.0 h1:StR6I/Wjpnl1XQsTt7D0hlUDsaetNAUeTsv
 github.com/warthog618/go-gpiocdev v0.10.0/go.mod h1:Hj1ECwLE3Hy8trth5BoT/WanO02zdoSmg3a5CTNasHA=
 github.com/warthog618/go-gpiosim v0.1.2 h1:8RsinSKZbsG6REhfVDpBr7gdzQeJ7RoCUxLR9oUlk0M=
 github.com/warthog618/go-gpiosim v0.1.2/go.mod h1:YXsnB+I9jdCMY4YAlMSRrlts25ltjmuIsrnoUrBLdqU=
+github.com/yalue/onnxruntime_go v1.31.0 h1:1ln4YW1SFOFfGJZXe3jNOb2JUSt+l2pEneZfV8HdtFA=
+github.com/yalue/onnxruntime_go v1.31.0/go.mod h1:b4X26A8pekNb1ACJ58wAXgNKeUCGEAQ9dmACut9Sm/4=
 go.opencensus.io v0.24.0 h1:y73uSU6J157QMP2kn2r30vwW1A2W2WFwSCGnAVxeaD0=
 go.opencensus.io v0.24.0/go.mod h1:vNK8G9p7aAivkbmorf4v+7Hgx+Zs0yY+0fOtgBfjQKo=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

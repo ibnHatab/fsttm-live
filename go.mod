@@ -8,6 +8,7 @@ require (
 	github.com/ibnHatab/fsttm/go v0.0.0-20261122153613-e28e1af02c58
 	github.com/k2-fsa/sherpa-onnx-go v1.13.6
 	github.com/warthog618/go-gpiocdev v0.10.0
+	github.com/yalue/onnxruntime_go v1.31.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
