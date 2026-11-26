@@ -34,3 +34,21 @@ func TestRefusal(t *testing.T) {
 		}
 	}
 }
+
+func TestCut(t *testing.T) {
+	for _, c := range []struct {
+		full, base, want string
+		fresh            bool
+	}{
+		{"Next video.", "Nina, what time is it?", "Next video.", true}, // anew: no letters lost
+		{"Nina, stop the radio.", "Next video.", "Nina, stop the radio.", true},
+		{"Go to sleep.", "Nina, stop the radio.", "Go to sleep.", true},
+		{"Nina, what time is it? Next video.", "Nina, what time is it?", "Next video.", false}, // accumulated
+		{"Nina, what time is it.Next video.", "Nina, what time is it?", "Next video.", false},  // its end revised
+		{"", "", "", false},
+	} {
+		if s, fresh := Cut(c.full, c.base); s != c.want || fresh != c.fresh {
+			t.Errorf("Cut(%q, %q) = %q %v, want %q %v", c.full, c.base, s, fresh, c.want, c.fresh)
+		}
+	}
+}

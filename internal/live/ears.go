@@ -152,6 +152,25 @@ func Refusal(s string) bool {
 	return false
 }
 
+// Cut is the utterance's part of the session's text (full), its text at the utterance's start
+// being base. The transcriber accumulated a session's utterances (base, then the new words after
+// it), revising the end of what it had written now and then; since 2026-11-26 it begins each
+// utterance anew: full shares at most a few letters with base ("Next video." after "Nina, what
+// time is it?": "N"), and cut there had lost the first letters ("ext video."). fresh: anew.
+func Cut(full, base string) (s string, fresh bool) {
+	if strings.HasPrefix(full, base) {
+		return strings.TrimSpace(full[len(base):]), false
+	}
+	n := 0
+	for n < len(full) && n < len(base) && full[n] == base[n] {
+		n++
+	}
+	if 2*n < len(base) { // not a revision of base's end: a new text
+		return strings.TrimSpace(full), true
+	}
+	return strings.TrimSpace(strings.TrimLeft(full[n:], " .,?!")), false // the revised end's punctuation is not the new words'
+}
+
 func (e *Ears) loop(ctx context.Context) {
 	texts := make(chan earsText, 256)
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -171,15 +190,9 @@ func (e *Ears) loop(ctx context.Context) {
 		lastEcho   string
 	)
 	seg := func() string {
-		var s string
-		if strings.HasPrefix(full, base) {
-			s = strings.TrimSpace(full[len(base):])
-		} else {
-			n := 0
-			for n < len(full) && n < len(base) && full[n] == base[n] {
-				n++
-			}
-			s = strings.TrimSpace(full[n:])
+		s, fresh := Cut(full, base)
+		if fresh {
+			base = "" // the transcriber began this utterance's text anew: what follows is all of it
 		}
 		if VocabEcho(s, e.Vocab) || Refusal(s) {
 			if s != lastEcho {
