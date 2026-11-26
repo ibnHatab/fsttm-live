@@ -13,12 +13,13 @@ package oww
 
 import (
 	"fmt"
-	"time"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -111,6 +112,24 @@ type Detector struct {
 	feat         [][]float32 // embeddings
 	// Spent: the time each model took so far (mel, embedding, the word's), for measuring
 	Spent [3]time.Duration
+	// the quiet: the embedding is nine tenths of the cost (a Pi 4: 21 % of a core, continuously). While
+	// the last 0.8 s (one embedding's window) stayed within gateDB of the room's floor, the embedding is
+	// the silence's, cached; any sound computes it again
+	floor  float64
+	quiet  int       // chunks in a row near the floor
+	silent []float32 // the silence's embedding
+	Reused int       // embeddings taken from the cache (measuring)
+}
+
+const gateDB = 8
+
+// level: a chunk's RMS in dBFS.
+func level(c []int16) float64 {
+	var s float64
+	for _, v := range c {
+		s += float64(v) * float64(v)
+	}
+	return 10*math.Log10(s/float64(len(c))+1) - 90.3
 }
 
 // New loads the shared models from dir (melspectrogram.onnx, embedding_model.onnx) and the wake
@@ -167,6 +186,7 @@ func (d *Detector) embed(win [][]float32) ([]float32, error) {
 // Reset: the buffers as openWakeWord starts them (mel frames of ones; embeddings of 4 s of noise).
 func (d *Detector) Reset() error {
 	d.pending, d.raw = nil, nil
+	d.floor, d.quiet, d.silent = 0, 0, nil
 	d.melBuf = make([][]float32, melWin)
 	for i := range d.melBuf {
 		r := make([]float32, melBins)
@@ -216,12 +236,32 @@ func (d *Detector) Feed(pcm []byte) (float32, error) {
 		if len(d.melBuf) > keepMel {
 			d.melBuf = d.melBuf[len(d.melBuf)-keepMel:]
 		}
-		t0 = time.Now()
-		e, err := d.embed(d.melBuf[len(d.melBuf)-melWin:])
-		if err != nil {
-			return best, err
+		// the room's floor: follows a fall at once, a rise at 0.5 dB a second
+		lv := level(c)
+		if d.floor == 0 || lv < d.floor {
+			d.floor = lv
+		} else {
+			d.floor += 0.04
 		}
-		d.Spent[1] += time.Since(t0)
+		if lv < d.floor+gateDB {
+			d.quiet++
+		} else {
+			d.quiet = 0
+		}
+		var e []float32
+		if d.quiet > melWin/8 && d.silent != nil {
+			e = d.silent
+			d.Reused++
+		} else {
+			t0 = time.Now()
+			if e, err = d.embed(d.melBuf[len(d.melBuf)-melWin:]); err != nil {
+				return best, err
+			}
+			d.Spent[1] += time.Since(t0)
+			if d.quiet > melWin/8 {
+				d.silent = e
+			}
+		}
 		d.feat = append(d.feat, e)
 		if len(d.feat) > keepFeat {
 			d.feat = d.feat[len(d.feat)-keepFeat:]

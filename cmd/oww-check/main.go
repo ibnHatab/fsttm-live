@@ -59,6 +59,6 @@ func main() {
 	}
 	dur := float64(len(b)) / 32000
 	el := time.Since(t0).Seconds()
-	fmt.Printf("%d detections in %.1fs of audio; %.2fs to run (real-time factor %.3f): mel %.2fs, embedding %.2fs, word %.2fs\n",
-		hits, dur, el, el/dur, d.Spent[0].Seconds(), d.Spent[1].Seconds(), d.Spent[2].Seconds())
+	fmt.Printf("%d detections in %.1fs of audio; %.2fs to run (real-time factor %.3f): mel %.2fs, embedding %.2fs, word %.2fs; %d embeddings the quiet's\n",
+		hits, dur, el, el/dur, d.Spent[0].Seconds(), d.Spent[1].Seconds(), d.Spent[2].Seconds(), d.Reused)
 }
