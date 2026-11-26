@@ -103,6 +103,20 @@ func (v *Voice) connect(ctx context.Context) error {
 	return nil
 }
 
+// Warm opens the session ahead of a turn (her name heard: the turn follows in a second), in the
+// background; Turn waits for it (the lock). A session already open is left as it is.
+func (v *Voice) Warm(ctx context.Context) {
+	go func() {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		if v.sess == nil {
+			if err := v.connect(ctx); err != nil {
+				v.Log("voice_warm_failed", map[string]any{"err": err.Error()})
+			}
+		}
+	}()
+}
+
 func (v *Voice) Connect(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()

@@ -439,3 +439,34 @@ func TestBargeDuck(t *testing.T) {
 		t.Fatalf("a barge-in in words did not cut her: %d cuts", r.spk.cuts)
 	}
 }
+
+// Her name alone (the spotter's hit, a name's length of voice): she wakes at the utterance's end,
+// not when the transcriber writes "Nina" (~1.5 s later); that text is then dropped, and words
+// beyond the name are still a turn.
+func TestBareName(t *testing.T) {
+	sp := &fakeSpotter{on: map[string]bool{"nina": true}}
+	r := newRig(t, Config{StartAsleep: true, Wake: "local", Spotter: sp})
+	r.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("pre")})
+	r.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("nina")})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 500 * time.Millisecond, Pitched: 400 * time.Millisecond})
+	if len(r.mind.turns) != 1 || !r.has("bare_name") {
+		t.Fatalf("not woken at the end: turns %v", r.mind.turns)
+	}
+	r.e.onHeard(live.Heard{Seq: r.e.seq, Text: "Hey, Nina.", Final: true})
+	if len(r.mind.turns) != 1 {
+		t.Fatalf("the name's text made a second turn: %v", r.mind.turns)
+	}
+	r.reply("Yes?")
+	// a longer one: the transcriber's text decides, as before
+	r2 := newRig(t, Config{StartAsleep: true, Wake: "local", Spotter: sp})
+	r2.e.onVad(audio.Event{Kind: audio.Start, PCM: []byte("pre")})
+	r2.e.onVad(audio.Event{Kind: audio.Audio, PCM: []byte("nina")})
+	r2.e.onVad(audio.Event{Kind: audio.End, Voiced: 2 * time.Second, Pitched: 2 * time.Second})
+	if len(r2.mind.turns) != 0 || r2.has("bare_name") {
+		t.Fatalf("a sentence taken as a bare name: %v", r2.mind.turns)
+	}
+	r2.e.onHeard(live.Heard{Seq: r2.e.seq, Text: "Nina, what time is it?", Final: true})
+	if len(r2.mind.turns) != 1 {
+		t.Fatalf("the sentence lost: %v", r2.mind.turns)
+	}
+}

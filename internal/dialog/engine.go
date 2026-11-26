@@ -139,6 +139,7 @@ type Engine struct {
 	pitched map[int]time.Duration
 	uttEnd  time.Time
 	tent    map[int]bool   // seq → started while Nina held the floor (echo until proven otherwise)
+	bare    map[int]bool   // seq → her name alone, woken to at its end (its transcript adds only the rest)
 	echoOf  map[int]string // seq → what Nina was saying when its barge-in was confirmed
 	interim string
 
@@ -178,6 +179,7 @@ func New(cfg Config, ears Ears, mind Mind, spk Speaker, tts TTS, log func(string
 		Typed:   make(chan string, 16),
 		Ctl:     make(chan func(*Engine), 16),
 		tent:    map[int]bool{},
+		bare:    map[int]bool{},
 		echoOf:  map[int]string{},
 		outlast: map[int]bool{},
 		voiced:  map[int]time.Duration{},
@@ -299,6 +301,14 @@ func (e *Engine) onVad(ev audio.Event) {
 				e.spotted(hit)
 			}
 		}
+		if e.kwsHit != "" && e.cfg.Wake == "local" && !e.Attn.Awake() && !e.tent[e.seq] &&
+			ev.Voiced >= minNameVoiced && ev.Voiced <= maxBareName && ev.Pitched >= minNamePitched {
+			// her name alone (the spotter's, a name's length of voice), asleep: she wakes at its end,
+			// not when the transcriber has written it (a bare "Nina" it finalises ~1.5 s after the
+			// end, waiting for more); its text, when it comes, adds only what is not the name
+			e.bare[e.seq] = true
+			e.Log("bare_name", map[string]any{"seq": e.seq, "voiced_s": ev.Voiced.Seconds(), "keyword": e.kwsHit})
+		}
 		switch {
 		case e.holding && e.kwsHit != "":
 			e.release()
@@ -323,6 +333,9 @@ func (e *Engine) onVad(ev audio.Event) {
 		}
 		e.Log("vad_end", map[string]any{"seq": e.seq, "dur_s": ev.Dur.Seconds(), "voiced_s": ev.Voiced.Seconds(), "pitched_s": ev.Pitched.Seconds(),
 			"forced": ev.Forced, "ref": ev.Ref, "aec_ref": ev.Ref > 0})
+		if e.bare[e.seq] {
+			e.dispatch(bareName, false) // the floor is free now: her turn
+		}
 	}
 }
 
@@ -369,6 +382,19 @@ func (e *Engine) onHeard(h live.Heard) {
 	delete(e.tent, h.Seq)
 	delete(e.outlast, h.Seq)
 	text := h.Text
+	if e.bare[h.Seq] {
+		delete(e.bare, h.Seq)
+		var rest []string
+		for _, w := range words(text) {
+			if ok, _ := e.Attn.MatchWake(w); !ok && !greeting[w] {
+				rest = append(rest, w)
+			}
+		}
+		if len(rest) == 0 {
+			return // the name she already woke to
+		}
+		text = strings.Join(rest, " ")
+	}
 	if said, ok := e.echoOf[h.Seq]; ok {
 		// a barge-in over her voice (or an utterance she spoke into): only the words she was
 		// not saying are the person's
@@ -428,6 +454,9 @@ func (e *Engine) spotted(hit string) {
 	}
 	e.kwsHit = hit
 	e.Log("kws", map[string]any{"seq": e.seq, "keyword": hit, "held": e.holding, "since_start_ms": time.Since(e.uttT).Milliseconds()})
+	if w, ok := e.mind.(interface{ Warm(context.Context) }); ok && e.holding {
+		w.Warm(e.ctx) // her session opens while the utterance ends (it had closed asleep: ~1 s, more when its handle expired)
+	}
 }
 
 // release: her name was heard in a held utterance: it goes to the transcriber from its start.
@@ -442,6 +471,12 @@ func (e *Engine) release() {
 const lateEcho = 10 * time.Second
 
 const minNameVoiced, maxNameVoiced = 250 * time.Millisecond, 2 * time.Second
+
+// maxBareName: the voice of a name said alone ("Nina", "Hey Nina"); longer, the words go to the transcriber
+const maxBareName = 1100 * time.Millisecond
+
+// bareName: what a bare name is taken to have said (she wakes on it)
+const bareName = "Nina"
 
 // a spoken "Nina" is voiced throughout (n-i-n-a): ~0.4 s with a pitch; clicks have none
 const minNamePitched = 150 * time.Millisecond
