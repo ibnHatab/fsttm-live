@@ -31,6 +31,9 @@ type MindEvent struct {
 // ToolFunc answers one function call (synchronous tools: 3.1 Flash Live waits for them).
 type ToolFunc func(ctx context.Context, args map[string]any) map[string]any
 
+// Now is the clock her turns carry (a test sets it).
+var Now = time.Now
+
 // Voice is the voice+mind: a native-audio Live session given text turns only (what the ears
 // heard and our attention passed, or a NOTE from SOURCES). Every event carries the id of the
 // turn it belongs to: the server answers turns in order and closes each with turnComplete
@@ -180,15 +183,20 @@ func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
 	v.nextID++
 	tc := true
 	turns := []*genai.Content{}
+	// the clock, with every turn: she had none (2026-11-26, pero: "what time is it?" was a web
+	// search answered in UTC; a timer's time left reckoned wrong)
+	now := "NOW (the local time, for you; say it only when it is asked for or needed): " + Now().Format("Monday, 2 January 2006, 15:04 MST")
 	if len(v.ctxq) > 0 {
 		// silent context: what the home's systems reported meanwhile, ahead of the turn
 		var ls []string
 		for _, c := range v.ctxq {
 			ls = append(ls, c.text)
 		}
-		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "HOME (reported by the home's systems since your last turn; for you, not to announce):\n" + strings.Join(ls, "\n")}}})
+		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: now + "\nHOME (reported by the home's systems since your last turn; for you, not to announce):\n" + strings.Join(ls, "\n")}}})
 		v.Log("voice_context", map[string]any{"lines": len(v.ctxq)})
 		v.ctxq = nil
+	} else {
+		turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: now}}})
 	}
 	turns = append(turns, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}})
 	if err := v.sess.SendClientContent(genai.LiveClientContentInput{Turns: turns, TurnComplete: &tc}); err != nil {

@@ -9,7 +9,10 @@
 //
 // Per phrase: from the phrase's end to her first sound, her words, awake or asleep as wanted.
 //
-//	wake-cycle [-panel http://pero.local:8770] [-cycles 3] [-voice am_puck]
+//	wake-cycle [-panel http://pero.local:8770] [-cycles 3] [-voice am_puck] [-script FILE]
+//
+// A script: one phrase a line, "| asleep" after it when she should end asleep; each phrase's
+// dialog events are printed in order (what she heard, the turn, her words, anything else).
 package main
 
 import (
@@ -143,6 +146,7 @@ func main() {
 	panel := flag.String("panel", "http://pero.local:8770", "her panel")
 	cycles := flag.Int("cycles", 3, "name / go to sleep rounds")
 	voice := flag.String("voice", "am_puck", "Paradee's voice")
+	script := flag.String("script", "", "phrases, one a line (\"| asleep\": she should end asleep)")
 	flag.Parse()
 	ws := "ws" + strings.TrimPrefix(*panel, "http") + "/api/audio"
 	go stream(*panel)
@@ -206,6 +210,9 @@ func main() {
 		Awake   any      `json:"awake"`
 		OK      bool     `json:"ok"`
 		Connect []string `json:"connects,omitempty"`
+		Heard   []string `json:"heard,omitempty"`
+		Turns   []string `json:"turns,omitempty"`
+		Trace   []string `json:"trace,omitempty"`
 	}
 	phrase := func(text string, wantAwake bool) result {
 		idle(*panel, 30*time.Second)
@@ -243,8 +250,33 @@ func main() {
 		vn := voiceN
 		mu.Unlock()
 		replied := false
+		skip := map[string]bool{"interim": true, "persona": true, "said": true, "note_filtered": true, "presence": true, "settings": true, "surprises": true}
 		for _, e := range got {
+			k, _ := e.m["ev"].(string)
+			if !skip[k] {
+				d := ""
+				for _, f := range []string{"text", "said", "name", "keyword", "why", "since_audio_ms"} {
+					if v, ok := e.m[f]; ok {
+						d = fmt.Sprintf("%v", v)
+						if len(d) > 60 {
+							d = d[:60] + "…"
+						}
+						break
+					}
+				}
+				r.Trace = append(r.Trace, fmt.Sprintf("+%.1fs %s %s", e.at.Sub(tEnd).Seconds(), k, d))
+			}
 			switch e.m["ev"] {
+			case "heard":
+				if t, _ := e.m["text"].(string); t != "" {
+					r.Heard = append(r.Heard, t)
+				}
+			case "turn":
+				t, _ := e.m["text"].(string)
+				if i := strings.LastIndex(t, ")\n"); i >= 0 {
+					t = t[i+2:]
+				}
+				r.Turns = append(r.Turns, t)
 			case "kws":
 				r.KWS = true
 			case "bare_name":
@@ -270,6 +302,36 @@ func main() {
 		return r
 	}
 	var all []result
+	if *script != "" {
+		b, err := os.ReadFile(*script)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			l = strings.TrimSpace(l)
+			if l == "" || strings.HasPrefix(l, "#") {
+				continue
+			}
+			awake := true
+			if t, ok := strings.CutSuffix(l, "| asleep"); ok {
+				l, awake = strings.TrimSpace(t), false
+			}
+			r := phrase(l, awake)
+			all = append(all, r)
+			for _, t := range r.Trace {
+				fmt.Println("    ", t)
+			}
+		}
+		ok := 0
+		for _, r := range all {
+			if r.OK {
+				ok++
+			}
+		}
+		fmt.Printf("%d/%d as wanted\n", ok, len(all))
+		return
+	}
 	all = append(all, phrase("Go to sleep.", false))
 	for i := 0; i < *cycles; i++ {
 		all = append(all, phrase("Nina.", true), phrase("Go to sleep.", false))

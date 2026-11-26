@@ -1,0 +1,14 @@
+# A morning in the office (wake-cycle -script): sleep, wake, follow-ups, tools, the screen, sleep
+Go to sleep. | asleep
+Nina.
+What's the weather like tomorrow?
+And the day after?
+Set a timer for two minutes.
+How long is left on the timer?
+Cancel the timer.
+What's on my calendar today?
+Show me the photos.
+Close the photos.
+Thank you, go to sleep. | asleep
+Nina, what time is it?
+Go to sleep. | asleep
