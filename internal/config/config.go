@@ -84,6 +84,7 @@ type Prefs struct {
 	// fitted to them (dB per doubling of the distance; 0: 6, the free field's)
 	BubbleSlope  float64      `yaml:"bubble_slope" json:"bubble_slope"`
 	BubblePoints [][2]float64 `yaml:"bubble_points,flow,omitempty" json:"bubble_points"`
+	BubbleOffset float64      `yaml:"bubble_offset,omitempty" json:"bubble_offset"` // dB at 1 m over the minimum, fitted with the slope
 }
 
 // Load reads path; a missing file is created from the default.

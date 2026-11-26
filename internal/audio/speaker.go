@@ -34,6 +34,10 @@ type Speaker struct {
 	// OnDuck is told when her voice is ducked or back (the music follows it at once: a reflex,
 	// not the rules' next beat)
 	OnDuck func(on bool)
+	// Offset: the distance calibration's dB at 1 m over the minimum (0: the minimum is at 1 m). With
+	// the slope alone a point under ~1.2 m could not be kept: Save put the bubble at that distance and
+	// lost the loudness the person had set (2026-11-26)
+	Offset float64
 
 	mu     sync.Mutex
 	cur    *reply
@@ -85,11 +89,22 @@ func (s *Speaker) slope() float64 {
 	return 6
 }
 
-// MaxBubble is the widest bubble: MaxGain at the slope (4 m at 6 dB a doubling).
-func (s *Speaker) MaxBubble() float64 { return math.Pow(2, MaxGain/s.slope()) }
+// MaxBubble is the widest bubble: MaxGain at the slope (4 m at 6 dB a doubling, no offset).
+func (s *Speaker) MaxBubble() float64 { return math.Pow(2, (MaxGain-s.Offset)/s.slope()) }
 
-// Gain is the dB over the minimum for a radius in metres.
-func (s *Speaker) Gain(r float64) float64 { return s.slope() * math.Log2(r) }
+// Gain is the dB over the minimum for a radius in metres: the offset (the distance calibration's
+// level at 1 m), and the slope for each doubling.
+func (s *Speaker) Gain(r float64) float64 { return s.Offset + s.slope()*math.Log2(r) }
+
+// SetOffset is the distance calibration's dB at 1 m over the calibrated minimum (clipped to ±MaxGain).
+func (s *Speaker) SetOffset(db float64) {
+	s.mu.Lock()
+	s.Offset = math.Max(-MaxGain, math.Min(MaxGain, db))
+	if s.bubble > 0 {
+		s.bubble = math.Max(0.5, math.Min(s.bubble, s.MaxBubble()))
+	}
+	s.mu.Unlock()
+}
 
 // SetGain scales her voice from the next chunk on. 1 is as recorded; clipped to [0.2, 2].
 func (s *Speaker) SetGain(g float64) {

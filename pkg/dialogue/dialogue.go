@@ -121,6 +121,7 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	if cfg.Prefs.BubbleSlope > 0 {
 		spk.SetSlope(cfg.Prefs.BubbleSlope)
 	}
+	spk.SetOffset(cfg.Prefs.BubbleOffset)
 	if cfg.Prefs.Bubble > 0 {
 		spk.SetBubble(cfg.Prefs.Bubble)
 	}
@@ -274,6 +275,9 @@ func (n *Dialogue) SetPrefs(f func(*config.Prefs)) (config.Prefs, error) {
 	if p.BubbleSlope != old.BubbleSlope && p.BubbleSlope > 0 {
 		n.spk.SetSlope(p.BubbleSlope)
 	}
+	if p.BubbleOffset != old.BubbleOffset {
+		n.spk.SetOffset(p.BubbleOffset)
+	}
 	if p.Bubble != 0 && (p.Bubble < 0.5 || p.Bubble > n.spk.MaxBubble()+1e-9) {
 		return old, fmt.Errorf("bubble: %v m (0.5 to %.1f)", p.Bubble, n.spk.MaxBubble())
 	}
@@ -361,7 +365,7 @@ func (n *Dialogue) Do(action, arg string) error {
 		}
 		return n.Here(d)
 	case "bubble_reset":
-		_, err := n.SetPrefs(func(p *config.Prefs) { p.BubblePoints, p.BubbleSlope, p.Bubble = nil, 0, 1 })
+		_, err := n.SetPrefs(func(p *config.Prefs) { p.BubblePoints, p.BubbleSlope, p.BubbleOffset, p.Bubble = nil, 0, 0, 1 })
 		return err
 	case "ui": // the screen's mode (nina: her own; ha: Home Assistant's full interface), to the pages
 		n.Log("ui", map[string]any{"mode": arg})
@@ -497,21 +501,42 @@ func (n *Dialogue) Here(d float64) error {
 	}
 	_, err := n.SetPrefs(func(p *config.Prefs) {
 		p.BubblePoints = append(append([][2]float64{}, p.BubblePoints...), [2]float64{d, math.Round(g*10) / 10})
-		var xy, xx float64
-		for _, q := range p.BubblePoints {
-			if x := math.Log2(q[0]); math.Abs(x) >= 0.3 {
-				xy += x * q[1]
-				xx += x * x
-			}
-		}
-		if xx > 0 {
-			p.BubbleSlope = math.Round(math.Max(2, math.Min(9, xy/xx))*10) / 10
-		}
-		max := math.Pow(2, audio.MaxGain/firstNonZero(p.BubbleSlope, 6))
-		p.Bubble = math.Round(math.Min(d, max)*100) / 100
+		p.BubbleSlope, p.BubbleOffset = FitBubble(p.BubblePoints, firstNonZero(p.BubbleSlope, 6))
+		max := math.Pow(2, (audio.MaxGain-p.BubbleOffset)/p.BubbleSlope)
+		p.Bubble = math.Round(math.Max(0.5, math.Min(d, max))*100) / 100
 	})
 	n.Log("bubble", map[string]any{"here": d, "gain_db": g, "prefs": n.Prefs()})
 	return err
+}
+
+// FitBubble fits the distance calibration to its points [metres, dB over the minimum]: the slope (dB
+// a doubling, 2 to 9) and the offset (dB at 1 m), so that each point's loudness is kept at its distance.
+// Points spread over less than a doubling (one, or all at about one distance) keep the slope given and
+// set the offset alone: the last point's loudness exactly.
+func FitBubble(pts [][2]float64, slope float64) (float64, float64) {
+	if len(pts) == 0 {
+		return slope, 0
+	}
+	var sx, sy float64
+	for _, q := range pts {
+		sx += math.Log2(q[0])
+		sy += q[1]
+	}
+	n := float64(len(pts))
+	mx, my := sx/n, sy/n
+	var sxx, sxy float64
+	for _, q := range pts {
+		x := math.Log2(q[0]) - mx
+		sxx += x * x
+		sxy += x * (q[1] - my)
+	}
+	r1 := func(v float64) float64 { return math.Round(v*10) / 10 }
+	if n >= 2 && sxx/n >= 0.25 {
+		slope = math.Max(2, math.Min(9, sxy/sxx))
+		return r1(slope), r1(math.Max(-audio.MaxGain, math.Min(audio.MaxGain, my-slope*mx)))
+	}
+	last := pts[len(pts)-1]
+	return r1(slope), r1(math.Max(-audio.MaxGain, math.Min(audio.MaxGain, last[1]-slope*math.Log2(last[0]))))
 }
 
 func firstNonZero(a, b float64) float64 {
