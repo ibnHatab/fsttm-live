@@ -1,0 +1,11 @@
+# Time (wake-cycle -script): the clock in her turns, a timer's time left, sleep and wake around it
+Go to sleep. | asleep
+Nina, what time is it?
+What day is it today?
+Set a timer for three minutes for the tea.
+How long is left on the tea timer?
+Thanks. Go to sleep. | asleep
+Nina.
+How much longer for the tea?
+Cancel it, thank you.
+Go to sleep. | asleep

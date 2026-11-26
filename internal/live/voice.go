@@ -185,7 +185,7 @@ func (v *Voice) Turn(ctx context.Context, text string) (int, error) {
 	turns := []*genai.Content{}
 	// the clock, with every turn: she had none (2026-11-26, pero: "what time is it?" was a web
 	// search answered in UTC; a timer's time left reckoned wrong)
-	now := "NOW (the local time, for you; say it only when it is asked for or needed): " + Now().Format("Monday, 2 January 2006, 15:04 MST")
+	now := "NOW (the local time, for you; say it only when it is asked for or needed): " + Now().Format("Monday, 2 January 2006, 15:04:05")
 	if len(v.ctxq) > 0 {
 		// silent context: what the home's systems reported meanwhile, ahead of the turn
 		var ls []string
