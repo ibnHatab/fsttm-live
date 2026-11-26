@@ -134,6 +134,24 @@ func VocabEcho(s string, vocab []string) bool {
 	return n >= 3 && strings.Trim(strings.ReplaceAll(rest, " and ", " "), " ") == ""
 }
 
+// Refusal tells a transcript that is the transcriber answering instead of transcribing ("I'm just a
+// language model and can't help with that.": 2026-11-26, "Nina, show me the album Nina's gallery."
+// twice, no interim before it): not the person's words. Short, and a model's stock refusal.
+func Refusal(s string) bool {
+	l := strings.ToLower(strings.ReplaceAll(s, "’", "'"))
+	if len(l) > 160 {
+		return false
+	}
+	for _, p := range []string{"i'm just a language model", "i am just a language model", "i'm only a language model",
+		"as a language model", "as an ai language model", "i'm an ai language model", "i'm a text-based ai",
+		"i can't help with that, as i'm only", "i'm not able to help with that, as i'm only"} {
+		if strings.Contains(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Ears) loop(ctx context.Context) {
 	texts := make(chan earsText, 256)
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -163,10 +181,10 @@ func (e *Ears) loop(ctx context.Context) {
 			}
 			s = strings.TrimSpace(full[n:])
 		}
-		if VocabEcho(s, e.Vocab) {
+		if VocabEcho(s, e.Vocab) || Refusal(s) {
 			if s != lastEcho {
 				lastEcho = s
-				e.Log("vocab_echo", map[string]any{"text": s})
+				e.Log(map[bool]string{true: "vocab_echo", false: "ears_refusal"}[VocabEcho(s, e.Vocab)], map[string]any{"text": s})
 			}
 			return ""
 		}

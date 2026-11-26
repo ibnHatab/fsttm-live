@@ -19,3 +19,18 @@ func TestVocabEcho(t *testing.T) {
 		}
 	}
 }
+
+func TestRefusal(t *testing.T) {
+	for _, s := range []string{"I'm just a language model and can't help with that.", "I’m just a language model and can’t help with that.",
+		"As a language model, I can't do that."} {
+		if !Refusal(s) {
+			t.Errorf("not a refusal: %q", s)
+		}
+	}
+	for _, s := range []string{"Nina, show me the album Nina's gallery.", "I can't help with that right now, Nina.",
+		"Tell me about large language models."} {
+		if Refusal(s) {
+			t.Errorf("a refusal: %q", s)
+		}
+	}
+}
