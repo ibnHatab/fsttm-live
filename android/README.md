@@ -21,3 +21,19 @@ Nina's dialogue running (Gemini Live, pi on Gemini Flash), turns spoken from Pas
 
 The jank is the conversation bubble re-rendered on every streamed word; batching those updates (one
 render per animation frame) is the first thing to try if the panel feels slow.
+
+### Her face (acasa's nina-card, `shell.html?remote`), same day
+
+At rest, the app's CPU and the WebView's frame time, by setting:
+
+| Setting | CPU at rest | Frame 50th |
+|---|---|---|
+| parallax shader 30/15 fps, blur over her face (the card's defaults) | 29–40 % | 31 ms |
+| CSS sway instead of the shader (`parallax=0`) | 37–59 % | 48 ms |
+| shader 20/8 fps (`fps=20,8`) | 19–32 % | 32 ms |
+| + no blur (`lite`) | 17–25 % | 15 ms |
+| + 0.7 resolution (`scale=0.7`): **Nina's setting** | 14–22 % | 15 ms |
+
+During a reply at Nina's setting: 41–55 % CPU, 7 % janky frames, 50th 12 ms (the plain panel before the
+batching: 27 % janky). The blur (`backdrop-filter`) was half of every frame: each new frame of her face
+re-blurs what lies under the bubbles.
