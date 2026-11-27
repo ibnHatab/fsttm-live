@@ -202,7 +202,7 @@ func (e *Ears) loop(ctx context.Context) {
 		} else {
 			var fresh bool
 			if s, fresh = Cut(full, base); fresh {
-				base, freshMode = "", true // anew once: anew for the rest of the session
+				freshMode = true // anew: anew for the rest of this utterance (base kept: the next one cuts at full)
 			}
 		}
 		refused = Refusal(s)
@@ -267,7 +267,10 @@ func (e *Ears) loop(ctx context.Context) {
 					e.Out <- Heard{Seq: c.seq, Final: true} // nothing will be heard
 					continue
 				}
-				seq, open, finalSent, lastSeg, base, refused = c.seq, true, false, "", full, false
+				// fresh mode is the utterance's, not the session's: once on for good, an accumulating
+				// transcriber's later utterances each carried all the session's text before them (the
+				// Fire 7, 2026-11-28: "Practically nothing… | Practically nothing… Maybe tomorrow…")
+				seq, open, finalSent, lastSeg, base, refused, freshMode = c.seq, true, false, "", full, false, false
 				ended, changed = time.Time{}, time.Now()
 				sess.SendRealtimeInput(genai.LiveRealtimeInput{ActivityStart: &genai.ActivityStart{}})
 			case 1:

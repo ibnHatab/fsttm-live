@@ -444,7 +444,7 @@ func (e *Engine) onHeard(h live.Heard) {
 		}
 		text = strings.Join(rest, " ")
 		if e.replying { // her "Yes?" is under way: the words are her next turn, not dropped as busy
-			e.after = text
+			e.after = strings.TrimSpace(e.after + " " + text)
 			e.Log("bare_rest_queued", map[string]any{"seq": h.Seq, "text": text})
 			return
 		}
@@ -620,7 +620,7 @@ func (e *Engine) dispatch(text string, typed bool) {
 		}
 		e.Attn.OnUtterance(text)
 		e.awakeChanged()
-		e.send(text)
+		e.sendWords(text)
 		return
 	}
 	named, _ := e.Attn.MatchWake(text)
@@ -638,8 +638,20 @@ func (e *Engine) dispatch(text string, typed bool) {
 		e.Attn.OnUtterance(text)
 	}
 	e.told = e.awake && !e.Attn.Awake() // a sleep phrase (her screens close what they show; a timeout leaves it)
-	e.send(text)                        // first: a sleep phrase's goodbye is a reply, and her session stays for it
+	e.sendWords(text)                   // first: a sleep phrase's goodbye is a reply, and her session stays for it
 	e.awakeChanged()                    // closed after the goodbye has played (finishReply)
+}
+
+// sendWords is the person's words to the mind: while she still replies, they are queued and her next
+// turn (joined in order), not dropped as busy. A paragraph the endpointer cut at its pauses lost every
+// piece after the first (the Fire 7, 2026-11-28: only "an alarm at 8:00" of a narrated paragraph).
+func (e *Engine) sendWords(text string) {
+	if e.replying && strings.TrimSpace(text) != "" {
+		e.after = strings.TrimSpace(e.after + " " + text)
+		e.Log("busy_queued", map[string]any{"text": text, "queued": e.after})
+		return
+	}
+	e.send(text)
 }
 
 // send gives the floor to SYSTEM and the turn to the mind.

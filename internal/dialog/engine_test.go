@@ -583,3 +583,37 @@ func TestNoFollowUpAfterTimeout(t *testing.T) {
 		t.Fatalf("after a timeout: %v %q", r.evs, r.mind.turns)
 	}
 }
+
+// A paragraph cut at its pauses: the next piece starts before the last one's final comes (the
+// transcriber lags the endpointer), so its final lands while she replies to the first: it is her next
+// turn, joined with any other, in order (it had been dropped as busy: only the first piece reached her).
+func TestBusyQueued(t *testing.T) {
+	r := newRig(t, Config{FollowUp: 0})
+	piece := func(text string, next bool) { // one utterance; next: the following one starts before its final
+		r.e.onVad(audio.Event{Kind: audio.Start})
+		seq := r.e.seq
+		r.e.onHeard(live.Heard{Seq: seq, Text: text})
+		r.e.onVad(audio.Event{Kind: audio.End, Voiced: 600 * time.Millisecond, Pitched: 500 * time.Millisecond})
+		if next {
+			r.e.onVad(audio.Event{Kind: audio.Start})
+		}
+		r.e.onHeard(live.Heard{Seq: seq, Text: text, Final: true})
+	}
+	r.e.onVad(audio.Event{Kind: audio.Start})
+	s1 := r.e.seq
+	r.e.onHeard(live.Heard{Seq: s1, Text: "Nina, I need an alarm"})
+	r.e.onVad(audio.Event{Kind: audio.End, Voiced: 600 * time.Millisecond, Pitched: 500 * time.Millisecond})
+	r.e.onHeard(live.Heard{Seq: s1, Text: "Nina, I need an alarm", Final: true}) // her turn begins
+	piece("at eight tomorrow", false) // its final while she still replies (no audio yet)
+	if len(r.mind.turns) == 1 && r.has("busy_queued") {
+		r.reply("Sure.")
+		if len(r.mind.turns) != 2 || !strings.Contains(r.mind.turns[1], "at eight tomorrow") {
+			t.Fatalf("her next turn: %q", r.mind.turns)
+		}
+		return
+	}
+	t.Logf("turns %q (the second piece cut her reply instead: the barge path)", r.mind.turns)
+	if len(r.mind.turns) != 2 || r.mind.turns[1] != "at eight tomorrow" {
+		t.Fatalf("the second piece lost: %q", r.mind.turns)
+	}
+}
