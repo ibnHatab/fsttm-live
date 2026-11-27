@@ -176,8 +176,12 @@ func (m *TextMind) run(ctx context.Context, id int) {
 			}
 			m.deliver(MindEvent{Turn: id, Kind: MindTool, Text: name})
 			result := map[string]any{"status": "error", "text": "no such tool: " + name}
+			t0 := time.Now()
 			if f := m.Funcs[name]; f != nil {
 				result = f(ctx, args)
+			}
+			if m.Log != nil { // as the Live voice logs it: her screens and the SITL's monitors read it
+				m.Log("tool", map[string]any{"name": name, "args": args, "result": result, "ms": time.Since(t0).Milliseconds()})
 			}
 			b, _ := json.Marshal(result)
 			m.mu.Lock()
