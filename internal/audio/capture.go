@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -28,7 +29,7 @@ type Frame struct {
 
 // Capture runs arecord and sends frames until the process ends.
 type Capture struct {
-	Device   string // ALSA device (hw:ArrayUAC10), or pulse:SOURCE
+	Device   string // ALSA device (hw:ArrayUAC10), pulse:SOURCE, or none (silence: headless, a SITL)
 	Channels int    // 6 for the ReSpeaker (firmware 6ch), 1 for a plain mic
 	Speech   int    // the channel to keep (0: the ReSpeaker's processed speech)
 	Ref      int    // the echo reference channel, -1 for none
@@ -36,6 +37,14 @@ type Capture struct {
 }
 
 func (c *Capture) Run(out chan<- Frame) error {
+	if c.Device == "none" { // no microphone (a SITL, headless: words come typed): silence, paced like a device
+		t := time.NewTicker(20 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			out <- Frame{PCM: make([]byte, frameByte)}
+		}
+		return nil
+	}
 	if src, ok := strings.CutPrefix(c.Device, "pulse:"); ok { // a PulseAudio source, e.g. an echo canceller's
 		c.cmd = exec.Command("parec", "-d", src, "--rate="+strconv.Itoa(Rate), "--channels="+strconv.Itoa(c.Channels),
 			"--format=s16le", "--latency-msec=20")
