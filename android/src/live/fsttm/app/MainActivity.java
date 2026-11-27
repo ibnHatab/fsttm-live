@@ -11,7 +11,9 @@ import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.WindowManager;
+import android.content.SharedPreferences;
 import android.webkit.ConsoleMessage;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -28,6 +30,27 @@ public class MainActivity extends Activity implements Speaker {
     volatile boolean listening;
     Thread mic;
     AudioTrack voice; // her speech, streamed
+    SharedPreferences prefs; // the person's mic and voice switches (her card's buttons), kept across restarts
+    volatile boolean micOn = true, voiceOn = true;
+
+    /** Her card's mic and voice buttons, in the page as window.NinaApp. */
+    public class NinaApp {
+        @JavascriptInterface public boolean get(String name) {
+            return "mic".equals(name) ? micOn : "voice".equals(name) && voiceOn;
+        }
+        @JavascriptInterface public void set(final String name, final boolean on) {
+            runOnUiThread(new Runnable() { public void run() {
+                if ("mic".equals(name)) {
+                    micOn = on;
+                    if (on) startMic(); else { listening = false; Mobile.listen(false); }
+                } else if ("voice".equals(name)) {
+                    voiceOn = on;
+                    if (!on) cut();
+                }
+                prefs.edit().putBoolean(name, on).apply();
+            }});
+        }
+    }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -35,6 +58,10 @@ public class MainActivity extends Activity implements Speaker {
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        prefs = getSharedPreferences("switches", MODE_PRIVATE);
+        micOn = prefs.getBoolean("mic", true);
+        voiceOn = prefs.getBoolean("voice", true);
+        web.addJavascriptInterface(new NinaApp(), "NinaApp");
         web.setWebViewClient(new WebViewClient());
         WebView.setWebContentsDebuggingEnabled(true); // chrome://inspect over adb (proof stage)
         web.setWebChromeClient(new WebChromeClient() { // the page's console in logcat (tag fsttm-web)
@@ -83,7 +110,7 @@ public class MainActivity extends Activity implements Speaker {
     }
 
     void startMic() {
-        if (listening) return;
+        if (listening || !micOn) return;
         listening = true;
         Mobile.listen(true);
         mic = new Thread(new Runnable() { public void run() {
@@ -115,6 +142,7 @@ public class MainActivity extends Activity implements Speaker {
 
     /** Speaker: her voice as it streams (s16le mono, 24 kHz); Go paces it in real time. */
     @Override public void voice(byte[] pcm) {
+        if (!voiceOn) return; // her voice switched off on her card: she speaks to no one
         voice.write(pcm, 0, pcm.length);
     }
 
