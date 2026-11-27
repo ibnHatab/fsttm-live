@@ -16,6 +16,10 @@ require (
 	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6 // indirect
+	golang.org/x/mobile v0.0.0-20261117202452-47699113848a // indirect
+	golang.org/x/mod v0.43.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/tools v0.53.0 // indirect
 )
 
 require (
@@ -29,10 +33,10 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/maxhawkins/go-webrtcvad v0.0.0-20210121163624-be60036f3083
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
