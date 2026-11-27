@@ -11,6 +11,8 @@ import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.WindowManager;
+import android.webkit.ConsoleMessage;
+import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
@@ -34,6 +36,13 @@ public class MainActivity extends Activity implements Speaker {
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
         web.setWebViewClient(new WebViewClient());
+        WebView.setWebContentsDebuggingEnabled(true); // chrome://inspect over adb (proof stage)
+        web.setWebChromeClient(new WebChromeClient() { // the page's console in logcat (tag fsttm-web)
+            @Override public boolean onConsoleMessage(ConsoleMessage m) {
+                Log.i("fsttm-web", m.message() + " (" + m.sourceId() + ":" + m.lineNumber() + ")");
+                return true;
+            }
+        });
         setContentView(web);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON // she is on screen while in front
                 | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED     // her tablet: over a swipe lock screen

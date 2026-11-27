@@ -60,6 +60,17 @@ func SetPersona(p Persona) {
 	persona, status = p, "not started"
 }
 
+// panelURL is the page the app opens once the persona runs: the web plugin's own panel unless the
+// persona has a screen of its own (SetPanel: Nina's face, served from the plugin's static files).
+var panelURL = "http://127.0.0.1:8770/"
+
+// SetPanel sets the page the app shows once the persona runs (from its package's init).
+func SetPanel(url string) {
+	mu.Lock()
+	defer mu.Unlock()
+	panelURL = url
+}
+
 var (
 	mu      sync.Mutex
 	checks  = map[string]func(dir string) string{}
@@ -117,7 +128,7 @@ func Start(files, tz string, sp Speaker) (string, error) {
 	m.HandleFunc("/api/status", func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		writeJSON(w, map[string]any{"status": status, "panel": "http://127.0.0.1:8770/", "listening": listenOn})
+		writeJSON(w, map[string]any{"status": status, "panel": panelURL, "listening": listenOn})
 	})
 	m.HandleFunc("/api/checks", func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()

@@ -91,6 +91,19 @@ function event_(text, err = false) {
   add(Object.assign(document.createElement('div'), { className: 'ev' + (err ? ' err' : ''), textContent: text }));
 }
 let ninaMsg = null, said = '';
+// her words stream one by one: the bubble is painted once per frame, not per word (the Fire 7's
+// WebView dropped a quarter of its frames, 2026-11-27)
+let saidFrame = 0;
+function paintSaid() {
+  if (saidFrame) return;
+  saidFrame = requestAnimationFrame(() => {
+    saidFrame = 0;
+    if (!ninaMsg) return;
+    const stick = atBottom();
+    ninaMsg.textContent = said.trim();
+    if (stick) log.scrollTop = log.scrollHeight;
+  });
+}
 const handlers = {
   interim: e => { $('interim').textContent = e.text ? `hearing: ${e.text}` : ''; },
   heard: e => { $('interim').textContent = ''; if (e.tentative && !e.text) return; },
@@ -101,8 +114,8 @@ const handlers = {
     else if (!e.typed_shown && e.text.trim()) msg('user', e.text.replace(/^\(You were interrupted[^)]*\)\n/, '')); // empty: only her note (words not made out)
     ninaMsg = null; said = '';
   },
-  said: e => { said += e.text; if (!ninaMsg) ninaMsg = msg('nina', ''); ninaMsg.textContent = said.trim(); },
-  reply_done: e => { if (!ninaMsg && e.said) ninaMsg = msg('nina', e.said); else if (ninaMsg) ninaMsg.textContent = e.said || said.trim(); ninaMsg = null; },
+  said: e => { said += e.text; if (!ninaMsg) ninaMsg = msg('nina', ''); paintSaid(); },
+  reply_done: e => { cancelAnimationFrame(saidFrame); saidFrame = 0; if (!ninaMsg && e.said) ninaMsg = msg('nina', e.said); else if (ninaMsg) ninaMsg.textContent = e.said || said.trim(); ninaMsg = null; },
   cut: () => { ninaMsg?.classList.add('cut'); ninaMsg = null; },
   echo: e => event_(`her own voice, ignored: “${e.text}”`),
   aside: e => event_(`not for her (no “Nina”, ${Math.round(e.since_spoke_s)} s after she spoke): “${e.text}”`),
