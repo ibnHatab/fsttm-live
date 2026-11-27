@@ -11,7 +11,11 @@ import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.WindowManager;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.media.MediaPlayer;
+import android.provider.AlarmClock;
+import org.json.JSONObject;
 import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -19,10 +23,11 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import live.fsttm.mobile.Mobile;
+import live.fsttm.mobile.Device;
 import live.fsttm.mobile.Speaker;
 
 /** The voice's page in a WebView; the mic goes to Go while the app is in front, Go's PCM to the speaker. */
-public class MainActivity extends Activity implements Speaker {
+public class MainActivity extends Activity implements Speaker, Device {
     static final String TAG = "fsttm";
     static final int RATE = 16000;
     static final int VOICE_RATE = 24000;
@@ -47,7 +52,7 @@ public class MainActivity extends Activity implements Speaker {
                     voiceOn = on;
                     if (!on) cut();
                 }
-                prefs.edit().putBoolean(name, on).apply();
+                prefs.edit().putBoolean(name, on).commit(); // at once: a kill right after a tap lost an apply()
             }});
         }
     }
@@ -79,6 +84,7 @@ public class MainActivity extends Activity implements Speaker {
         voice = new AudioTrack(AudioManager.STREAM_MUSIC, VOICE_RATE, AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, Math.max(vmin, VOICE_RATE), AudioTrack.MODE_STREAM);
         voice.play();
+        Mobile.setDevice(this);
         String url;
         try {
             url = Mobile.start(getFilesDir().getPath(), java.util.TimeZone.getDefault().getID(), this);
@@ -143,6 +149,7 @@ public class MainActivity extends Activity implements Speaker {
     /** Speaker: her voice as it streams (s16le mono, 24 kHz); Go paces it in real time. */
     @Override public void voice(byte[] pcm) {
         if (!voiceOn) return; // her voice switched off on her card: she speaks to no one
+        duck();
         voice.write(pcm, 0, pcm.length);
     }
 
@@ -153,9 +160,105 @@ public class MainActivity extends Activity implements Speaker {
         voice.play();
     }
 
+    // ---- Device: the actions the persona may ask for (a fixed list: no other intent) ----
+
+    MediaPlayer radio;
+    float radioVolume = 0.6f;
+    long duckedUntil;
+    static final float DUCK = 0.25f; // the radio under her voice
+
+    @Override public String act(String kind, String args) {
+        try {
+            final JSONObject a = new JSONObject(args == null || args.isEmpty() ? "{}" : args);
+            switch (kind) {
+                case "radio.play": {
+                    final String url = a.getString("url");
+                    if (a.has("volume")) radioVolume = (float) a.getDouble("volume");
+                    runOnUiThread(new Runnable() { public void run() { playRadio(url); }});
+                    return ok("starting");
+                }
+                case "radio.stop":
+                    runOnUiThread(new Runnable() { public void run() { stopRadio(); }});
+                    return ok("stopped");
+                case "radio.volume":
+                    radioVolume = (float) Math.max(0, Math.min(1, a.getDouble("volume")));
+                    runOnUiThread(new Runnable() { public void run() { if (radio != null) radio.setVolume(radioVolume, radioVolume); }});
+                    return ok("volume");
+                case "alarm.set": {
+                    Intent i = new Intent(AlarmClock.ACTION_SET_ALARM)
+                            .putExtra(AlarmClock.EXTRA_HOUR, a.getInt("hour"))
+                            .putExtra(AlarmClock.EXTRA_MINUTES, a.getInt("minute"))
+                            .putExtra(AlarmClock.EXTRA_MESSAGE, a.optString("label", "Nina"))
+                            .putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+                    return launch(i, "alarm set");
+                }
+                case "timer.set": {
+                    Intent i = new Intent(AlarmClock.ACTION_SET_TIMER)
+                            .putExtra(AlarmClock.EXTRA_LENGTH, a.getInt("seconds"))
+                            .putExtra(AlarmClock.EXTRA_MESSAGE, a.optString("label", "Nina"))
+                            .putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+                    return launch(i, "timer set");
+                }
+                case "alarms.show":
+                    return launch(new Intent(AlarmClock.ACTION_SHOW_ALARMS), "shown");
+                default:
+                    return err("no such action: " + kind);
+            }
+        } catch (Exception e) {
+            return err(e.toString());
+        }
+    }
+
+    String launch(Intent i, String what) {
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (i.resolveActivity(getPackageManager()) == null) return err("no app on this device does that");
+        startActivity(i);
+        return ok(what);
+    }
+
+    void playRadio(String url) {
+        stopRadio();
+        radio = new MediaPlayer();
+        try {
+            radio.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            radio.setDataSource(url);
+            radio.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                public void onPrepared(MediaPlayer mp) { mp.setVolume(radioVolume, radioVolume); mp.start(); }});
+            radio.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                public boolean onError(MediaPlayer mp, int what, int extra) { Log.w(TAG, "radio error " + what + "/" + extra); stopRadio(); return true; }});
+            radio.prepareAsync();
+        } catch (Exception e) {
+            Log.w(TAG, "radio", e);
+            stopRadio();
+        }
+    }
+
+    void stopRadio() {
+        if (radio != null) { try { radio.release(); } catch (Exception ignored) {} radio = null; }
+    }
+
+    /** Her voice over the radio: the radio down while she speaks, up 800 ms after her last word. */
+    void duck() {
+        final MediaPlayer r = radio;
+        if (r == null) return;
+        boolean was = System.currentTimeMillis() < duckedUntil;
+        duckedUntil = System.currentTimeMillis() + 800;
+        if (was) return;
+        try { r.setVolume(radioVolume * DUCK, radioVolume * DUCK); } catch (Exception ignored) {}
+        final android.os.Handler h = new android.os.Handler(getMainLooper());
+        h.postDelayed(new Runnable() { public void run() {
+            if (System.currentTimeMillis() < duckedUntil) { h.postDelayed(this, 200); return; }
+            if (radio == r) try { r.setVolume(radioVolume, radioVolume); } catch (Exception ignored) {}
+        }}, 900);
+    }
+
+    static String ok(String status) { return "{\"status\":\"" + status + "\"}"; }
+    static String err(String msg) { return JSONObject.quote(msg).isEmpty() ? "{}" : "{\"status\":\"error\",\"error\":" + JSONObject.quote(msg) + "}"; }
+
     @Override protected void onDestroy() {
         listening = false;
         Mobile.stop();
+        stopRadio();
         voice.release();
         super.onDestroy();
     }

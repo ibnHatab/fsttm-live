@@ -71,6 +71,48 @@ func SetPanel(url string) {
 	panelURL = url
 }
 
+// Device is implemented in Java: the device's own actions, a fixed list the app knows (radio.play
+// {url, volume}, radio.stop, radio.volume {volume}: its own MediaPlayer, ducked under her voice;
+// alarm.set {hour, minute, label}, timer.set {seconds, label}, alarms.show: the Clock app's
+// intents). Act takes the kind and its arguments as JSON and answers JSON ({"status": …, …}).
+// No action outside the list: the persona's tools name a kind, never an intent.
+type Device interface {
+	Act(kind, args string) string
+}
+
+var device Device
+
+// SetDevice is called by the app with its Device, before Start.
+func SetDevice(d Device) {
+	mu.Lock()
+	defer mu.Unlock()
+	device = d
+}
+
+// Act runs one of the device's actions for the persona (Go side): its result, or an error when the
+// app has no device or the action failed.
+func Act(kind string, args map[string]any) (map[string]any, error) {
+	mu.Lock()
+	d := device
+	mu.Unlock()
+	if d == nil {
+		return nil, fmt.Errorf("no device here")
+	}
+	if args == nil {
+		args = map[string]any{} // JSON {} (not null: the app's parser wants an object)
+	}
+	b, _ := json.Marshal(args)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(d.Act(kind, string(b))), &out); err != nil {
+		return nil, fmt.Errorf("%s: the app's answer: %v", kind, err)
+	}
+	if s, _ := out["status"].(string); s == "error" {
+		msg, _ := out["error"].(string)
+		return out, fmt.Errorf("%s: %s", kind, msg)
+	}
+	return out, nil
+}
+
 var (
 	mu      sync.Mutex
 	checks  = map[string]func(dir string) string{}
