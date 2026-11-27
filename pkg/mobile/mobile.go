@@ -18,8 +18,11 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,14 +196,78 @@ func Start(files, tz string, sp Speaker) (string, error) {
 		}
 		writeJSON(w, map[string]string{"result": fn(d)})
 	})
+	m.HandleFunc("GET /api/keys", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		out := []map[string]any{}
+		for _, k := range keys {
+			_, err := os.Stat(filepath.Join(dir, k.Path))
+			out = append(out, map[string]any{"name": k.Name, "label": k.Label, "optional": k.Optional, "set": err == nil})
+		}
+		writeJSON(w, out)
+	})
+	m.HandleFunc("POST /api/keys", saveKeys)
 	srv = &http.Server{Handler: m}
 	go srv.Serve(ln)
 	if persona != nil {
-		ctx, c := context.WithCancel(context.Background())
-		cancel, status = c, "starting"
-		go run(ctx, persona, files, sp)
+		startPersona()
 	}
 	return "http://127.0.0.1:8771/", nil
+}
+
+// startPersona runs the persona (again, after a failed start: a key just given). Called with mu held.
+func startPersona() {
+	ctx, c := context.WithCancel(context.Background())
+	cancel, status = c, "starting"
+	go run(ctx, persona, dir, speaker)
+}
+
+// Key is a credential file the persona needs, under the app's files (the user types it on the
+// start page; it never leaves the device's private storage).
+type Key struct {
+	Name, Label, Path string
+	Optional          bool
+}
+
+var keys []Key
+
+// SetKeys registers the persona's credential files (from its package's init).
+func SetKeys(k ...Key) {
+	mu.Lock()
+	defer mu.Unlock()
+	keys = k
+}
+
+// saveKeys writes the keys given ({name: value}), 0600, then starts the persona again if it had failed.
+func saveKeys(w http.ResponseWriter, r *http.Request) {
+	var in map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "a JSON object of keys", 400)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	saved := 0
+	for _, k := range keys {
+		v := strings.TrimSpace(in[k.Name])
+		if v == "" {
+			continue
+		}
+		p := filepath.Join(dir, k.Path)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if err := os.WriteFile(p, []byte(v+"\n"), 0o600); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		saved++
+	}
+	if saved > 0 && strings.HasPrefix(status, "error") && persona != nil {
+		startPersona()
+	}
+	writeJSON(w, map[string]any{"saved": saved, "status": status})
 }
 
 // run starts the persona's dialogue and runs it until the app stops it.

@@ -14,6 +14,9 @@ pre{white-space:pre-wrap;background:#1a2029;padding:10px;border-radius:6px;font-
 </style></head><body>
 <h1>Nina on Android: proof</h1>
 <div>Persona: <b id="persona">…</b> <a id="panel" style="display:none;color:#7aa7ff" href="http://127.0.0.1:8770/">open her panel</a></div>
+<div id="keys" style="display:none;margin:10px 0;padding:10px;background:#1a2029;border-radius:6px">
+<div style="margin-bottom:6px">Her keys (kept on this device only):</div><div id="keyrows"></div>
+<button onclick="saveKeys()">Save</button> <span id="keymsg" class="muted"></span></div>
 <div>Mic <span id="st" class="muted"></span></div>
 <div class="meter"><div class="bar" id="bar"></div></div>
 <div class="muted" id="mem"></div>
@@ -35,6 +38,13 @@ async function status(){try{const s=await (await fetch('/api/status')).json();$(
  $('panel').style.display=s.status=='running'?'inline':'none';
  if(s.status=='running'&&!location.search.includes('stay')){location.href=s.panel;return}}catch(e){} setTimeout(status,1000)}
 status();
+async function keys(){try{const ks=await (await fetch('/api/keys')).json();
+ const missing=ks.filter(k=>!k.set); $('keys').style.display=missing.length?'block':'none';
+ $('keyrows').innerHTML=missing.map(k=>'<div style="margin:4px 0"><label>'+k.label+(k.optional?' (optional)':'')+'<br><input id="key-'+k.name+'" type="password" autocomplete="off" style="width:100%;font-size:16px;padding:6px"></label></div>').join('');}catch(e){}}
+async function saveKeys(){const body={};document.querySelectorAll('#keyrows input').forEach(i=>body[i.id.slice(4)]=i.value);
+ const r=await fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ $('keymsg').textContent=r.ok?'saved: '+(await r.json()).saved:await r.text(); keys();}
+keys();
 fetch('/api/checks').then(r=>r.json()).then(ns=>{$('checks').innerHTML=ns.map(n=>'<button onclick="check(\''+n+'\')">'+n+'</button>').join('')});
 poll();
 </script></body></html>`
