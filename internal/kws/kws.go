@@ -1,3 +1,5 @@
+//go:build !android
+
 // Package kws is Nina's local wake word: sherpa-onnx's keyword spotter (a 3.3M-parameter
 // zipformer, open vocabulary: the keywords are written as the model's BPE tokens) on the
 // utterances the endpointer cuts. Asleep, an utterance goes to the cloud transcriber only when

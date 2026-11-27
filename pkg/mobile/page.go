@@ -13,10 +13,12 @@ pre{white-space:pre-wrap;background:#1a2029;padding:10px;border-radius:6px;font-
 .muted{color:#9aa4b5;font-size:13px}
 </style></head><body>
 <h1>Nina on Android: proof</h1>
+<div>Persona: <b id="persona">…</b> <a id="panel" style="display:none;color:#7aa7ff" href="http://127.0.0.1:8770/">open her panel</a></div>
 <div>Mic <span id="st" class="muted"></span></div>
 <div class="meter"><div class="bar" id="bar"></div></div>
 <div class="muted" id="mem"></div>
 <div><button onclick="echo()">Echo 3 s</button><span id="checks"></span></div>
+<div class="muted">This page: 127.0.0.1:8771/?stay (it opens her panel once she runs)</div>
 <pre id="out">Speak: the bar moves. Echo records 3 seconds and plays them back.</pre>
 <script>
 const $=id=>document.getElementById(id);
@@ -29,6 +31,10 @@ async function echo(){$('out').textContent='Recording 3 s...';
  const r=await fetch('/api/echo');$('out').textContent=r.ok?'Played back '+(await r.json()).played_s+' s':await r.text()}
 async function check(n){$('out').textContent='Running '+n+'...';
  const r=await fetch('/api/check?name='+n);$('out').textContent=r.ok?(await r.json()).result:await r.text()}
+async function status(){try{const s=await (await fetch('/api/status')).json();$('persona').textContent=s.status;
+ $('panel').style.display=s.status=='running'?'inline':'none';
+ if(s.status=='running'&&!location.search.includes('stay')){location.href=s.panel;return}}catch(e){} setTimeout(status,1000)}
+status();
 fetch('/api/checks').then(r=>r.json()).then(ns=>{$('checks').innerHTML=ns.map(n=>'<button onclick="check(\''+n+'\')">'+n+'</button>').join('')});
 poll();
 </script></body></html>`

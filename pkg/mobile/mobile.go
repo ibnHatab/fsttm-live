@@ -1,14 +1,17 @@
 // Package mobile is the voice's Android bridge (gomobile bind): the app's Java side feeds the
-// mic's PCM in (Mic) and plays what comes back (Speaker); a page on 127.0.0.1:8770 is what the
+// mic's PCM in (Mic) and plays what comes back (Speaker); her panel (127.0.0.1:8770) is what the
 // app's WebView shows. A persona embedded in the app registers its own checks (Register) from its
 // package's init, so the wrapper knows no persona: it is bound together with one
 // (gomobile bind github.com/ibnHatab/fsttm-live/pkg/mobile <persona's package>).
 //
-// Proof stage (2026-11-27): a level meter, a 3 s echo (mic → Go → speaker), the persona's checks,
-// and the Go heap, to see what runs and what it costs on a 1 GB tablet.
+// The persona's dialogue (SetPersona) is fsttm-live's own: the app's mic is its remote microphone
+// (RemoteFrame, on while the app is in front: Listen), her voice its remote listener (RemoteVoice,
+// streamed to Speaker.Voice), her panel the web plugin's page on 127.0.0.1:8770. The proof page
+// (127.0.0.1:8771: a level meter, a 3 s echo, the persona's checks, the Go heap) stays for checking.
 package mobile
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -19,14 +22,42 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/ibnHatab/fsttm-live/pkg/dialogue"
 )
 
 // Rate is the PCM the bridge carries: 16 kHz, mono, s16le (the dialog's).
 const Rate = 16000
 
-// Speaker is implemented in Java (an AudioTrack): Play gets s16le mono PCM at Rate.
+// Speaker is implemented in Java (AudioTracks): Play gets s16le mono PCM at Rate (the echo, one
+// piece); Voice her speech as it streams, s16le mono at VoiceRate; Cut drops what Voice holds (she
+// was interrupted).
 type Speaker interface {
 	Play(pcm []byte)
+	Voice(pcm []byte)
+	Cut()
+}
+
+// VoiceRate is her voice's rate (the Live model's audio).
+const VoiceRate = 24000
+
+// Persona starts the embedded persona's dialogue (its plugins started: the panel), files the app's
+// files directory; the bridge runs it, feeds it the mic and plays its voice.
+type Persona func(ctx context.Context, files string) (*dialogue.Dialogue, error)
+
+var (
+	persona  Persona
+	dlg      *dialogue.Dialogue
+	status   = "no persona"
+	listenOn bool
+	cancel   context.CancelFunc
+)
+
+// SetPersona registers the embedded persona (from its package's init).
+func SetPersona(p Persona) {
+	mu.Lock()
+	defer mu.Unlock()
+	persona, status = p, "not started"
 }
 
 var (
@@ -54,15 +85,20 @@ func Register(name string, fn func(dir string) string) {
 	checks[name] = fn
 }
 
-// Start serves the page on 127.0.0.1:8770 and returns its URL; files is the app's files directory.
-func Start(files string, sp Speaker) (string, error) {
+// Start serves the proof page on 127.0.0.1:8771, starts the persona, and returns the page's URL;
+// files is the app's files directory, tz the device's time zone (Go on Android is in UTC unless
+// told: she said "five past six" at 20:05, 2026-11-27).
+func Start(files, tz string, sp Speaker) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if srv != nil {
-		return "http://127.0.0.1:8770/", nil
+		return "http://127.0.0.1:8771/", nil
+	}
+	if loc, err := time.LoadLocation(tz); err == nil && tz != "" {
+		time.Local = loc
 	}
 	dir, speaker = files, sp
-	ln, err := net.Listen("tcp", "127.0.0.1:8770")
+	ln, err := net.Listen("tcp", "127.0.0.1:8771")
 	if err != nil {
 		return "", err
 	}
@@ -78,6 +114,11 @@ func Start(files string, sp Speaker) (string, error) {
 			"heap_mb": float64(ms.HeapAlloc) / 1e6, "sys_mb": float64(ms.Sys) / 1e6, "goroutines": runtime.NumGoroutine()})
 	})
 	m.HandleFunc("/api/echo", echo)
+	m.HandleFunc("/api/status", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		writeJSON(w, map[string]any{"status": status, "panel": "http://127.0.0.1:8770/", "listening": listenOn})
+	})
 	m.HandleFunc("/api/checks", func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		var names []string
@@ -101,8 +142,60 @@ func Start(files string, sp Speaker) (string, error) {
 	})
 	srv = &http.Server{Handler: m}
 	go srv.Serve(ln)
-	return "http://127.0.0.1:8770/", nil
+	if persona != nil {
+		ctx, c := context.WithCancel(context.Background())
+		cancel, status = c, "starting"
+		go run(ctx, persona, files, sp)
+	}
+	return "http://127.0.0.1:8771/", nil
 }
+
+// run starts the persona's dialogue and runs it until the app stops it.
+func run(ctx context.Context, p Persona, files string, sp Speaker) {
+	d, err := p(ctx, files)
+	mu.Lock()
+	if err != nil {
+		status = "error: " + err.Error()
+		mu.Unlock()
+		return
+	}
+	dlg, status = d, "running"
+	on := listenOn
+	mu.Unlock()
+	d.RemoteVoice(func(pcm []byte) {
+		if pcm == nil {
+			sp.Cut()
+			return
+		}
+		sp.Voice(pcm)
+	})
+	if on {
+		go func() { time.Sleep(time.Second); d.RemoteMic(true) }() // once its engine runs
+	}
+	err = d.Run(ctx)
+	mu.Lock()
+	dlg = nil
+	if err != nil {
+		status = "error: " + err.Error()
+	} else {
+		status = "stopped"
+	}
+	mu.Unlock()
+}
+
+// Listen: the app in front (on) or not: the persona hears the mic only while it is in front.
+func Listen(on bool) {
+	mu.Lock()
+	listenOn = on
+	d := dlg
+	mu.Unlock()
+	if d != nil {
+		d.RemoteMic(on)
+	}
+}
+
+// Status is the persona's state: no persona, not started, starting, running, stopped, error: ….
+func Status() string { mu.Lock(); defer mu.Unlock(); return status }
 
 // Stop ends the page's server.
 func Stop() {
@@ -111,6 +204,10 @@ func Stop() {
 	if srv != nil {
 		srv.Close()
 		srv = nil
+	}
+	if cancel != nil {
+		cancel()
+		cancel = nil
 	}
 }
 
@@ -125,6 +222,15 @@ func Mic(pcm []byte) {
 		v := float64(int16(binary.LittleEndian.Uint16(pcm[2*i:]))) / 32768
 		sum += v * v
 		peak = math.Max(peak, math.Abs(v))
+	}
+	mu.Lock()
+	d := dlg
+	if rec.want > 0 { // not while the echo records
+		d = nil
+	}
+	mu.Unlock()
+	if d != nil { // the persona hears it, in order
+		d.RemoteFrame(pcm)
 	}
 	mu.Lock()
 	defer mu.Unlock()
