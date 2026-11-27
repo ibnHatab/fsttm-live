@@ -317,6 +317,9 @@ func Listen(on bool) {
 // Status is the persona's state: no persona, not started, starting, running, stopped, error: ….
 func Status() string { mu.Lock(); defer mu.Unlock(); return status }
 
+// Panel is the page the app opens once the persona runs (SetPanel's, else the web plugin's panel).
+func Panel() string { mu.Lock(); defer mu.Unlock(); return panelURL }
+
 // Stop ends the page's server.
 func Stop() {
 	mu.Lock()
