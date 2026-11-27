@@ -147,7 +147,8 @@ func Register(name string, fn func(dir string) string) {
 func Start(files, tz string, sp Speaker) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	if srv != nil {
+	if srv != nil { // a new Activity in the same process: the persona runs on; its voice goes to the new speaker
+		speaker = sp
 		return "http://127.0.0.1:8771/", nil
 	}
 	if loc, err := time.LoadLocation(tz); err == nil && tz != "" {
@@ -282,12 +283,18 @@ func run(ctx context.Context, p Persona, files string, sp Speaker) {
 	dlg, status = d, "running"
 	on := listenOn
 	mu.Unlock()
-	d.RemoteVoice(func(pcm []byte) {
-		if pcm == nil {
-			sp.Cut()
+	d.RemoteVoice(func(pcm []byte) { // the current speaker (the Activity may have been made again since)
+		mu.Lock()
+		cur := speaker
+		mu.Unlock()
+		if cur == nil {
 			return
 		}
-		sp.Voice(pcm)
+		if pcm == nil {
+			cur.Cut()
+			return
+		}
+		cur.Voice(pcm)
 	})
 	if on {
 		go func() { time.Sleep(time.Second); d.RemoteMic(true) }() // once its engine runs
@@ -320,7 +327,7 @@ func Status() string { mu.Lock(); defer mu.Unlock(); return status }
 // Panel is the page the app opens once the persona runs (SetPanel's, else the web plugin's panel).
 func Panel() string { mu.Lock(); defer mu.Unlock(); return panelURL }
 
-// Stop ends the page's server.
+// Stop ends the page's server and the persona (the process ending; an Activity's end does not call it).
 func Stop() {
 	mu.Lock()
 	defer mu.Unlock()
