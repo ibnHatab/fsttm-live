@@ -25,9 +25,11 @@ type Config struct {
 	Key     string `yaml:"key"`     // the AI Studio key's file (never the key itself)
 	Charter string `yaml:"charter"` // the voice session's system instruction file
 	Models  struct {
-		Ears  string   `yaml:"ears"`
-		Mind  string   `yaml:"mind"`
-		Vocab []string `yaml:"vocab"` // the ears' customVocabulary
+		Ears string `yaml:"ears"`
+		Mind string `yaml:"mind"` // a Live model, or openrouter:MODEL (a text mind: no voice, the SITL)
+		// MindKey: the text mind's key file (openrouter: KEY or OPENROUTER_API_KEY=…; default ~/.config/nina/openrouter.env)
+		MindKey string   `yaml:"mind_key"`
+		Vocab   []string `yaml:"vocab"` // the ears' customVocabulary
 	} `yaml:"models"`
 	Audio struct {
 		Device     string        `yaml:"device"`   // capture: ALSA device or pulse:SOURCE

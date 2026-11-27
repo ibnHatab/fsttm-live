@@ -54,6 +54,15 @@ type Tools struct {
 	Funcs map[string]live.ToolFunc
 }
 
+// MindSession is her mind as the dialogue holds it: Gemini Live's voice (live.Voice), or a text mind
+// (live.TextMind: an OpenAI-compatible model, no voice; headless, the SITL).
+type MindSession interface {
+	dialog.Mind
+	Connect(ctx context.Context) error
+	SetVoiceName(name string)
+	ContextKey(key, line string)
+}
+
 // Config is the dialogue's configuration (audio, models, dialog, prefs, plugins); Prefs the
 // person's preferences in it.
 type (
@@ -80,7 +89,7 @@ type Dialogue struct {
 	Cfg    *config.Config
 	Ev     *evlog.Log
 	Engine *dialog.Engine
-	Mind   *live.Voice
+	Mind   MindSession
 	Ears   *live.Ears
 	spk    *audio.Speaker
 
@@ -107,8 +116,21 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 		return nil, err
 	}
 	n := &Dialogue{Cfg: cfg, Ev: log, prefs: cfg.Prefs, SavePrefs: cfg.SavePrefs}
-	n.Mind = &live.Voice{Client: client, Model: cfg.Models.Mind, VoiceName: cfg.Prefs.VoiceName, System: string(sys),
-		Tools: tools.Decls, Funcs: tools.Funcs, Compress: 24000, Log: log.Ev}
+	var voice *live.Voice
+	var text *live.TextMind
+	if m, ok := strings.CutPrefix(cfg.Models.Mind, "openrouter:"); ok { // a mind without a voice (headless: the SITL)
+		key := cfg.Models.MindKey
+		if key == "" {
+			key = "~/.config/nina/openrouter.env"
+		}
+		text = &live.TextMind{URL: "https://openrouter.ai/api/v1/chat/completions", Model: m, KeyFile: cfg.Expand(key),
+			System: string(sys), Tools: tools.Decls, Funcs: tools.Funcs, Log: log.Ev}
+		n.Mind = text
+	} else {
+		voice = &live.Voice{Client: client, Model: cfg.Models.Mind, VoiceName: cfg.Prefs.VoiceName, System: string(sys),
+			Tools: tools.Decls, Funcs: tools.Funcs, Compress: 24000, Log: log.Ev}
+		n.Mind = voice
+	}
 	n.Ears = &live.Ears{Client: client, Model: cfg.Models.Ears, Vocab: cfg.Models.Vocab,
 		Settle: 200 * time.Millisecond, FinalWait: 1500 * time.Millisecond, MaxAge: 8 * time.Minute, Log: log.Ev}
 	spk := audio.NewSpeaker(cfg.Audio.Out, 24000)
@@ -138,7 +160,12 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	if t := localVoice(cfg.Prefs); t != nil {
 		n.Engine.SetLocal(t)
 	}
-	n.Mind.Out, n.Ears.Out = n.Engine.MindEv, n.Engine.Heard
+	if voice != nil {
+		voice.Out = n.Engine.MindEv
+	} else {
+		text.Out = n.Engine.MindEv
+	}
+	n.Ears.Out = n.Engine.Heard
 	log.Quiet["interim"], log.Quiet["said"] = true, true // the panel's; the file has heard and reply_done
 	go func() {
 		for ok := range spk.Done {
