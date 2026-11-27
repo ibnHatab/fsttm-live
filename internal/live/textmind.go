@@ -216,6 +216,10 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage *struct {
+			Prompt     int `json:"prompt_tokens"`
+			Completion int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
 		return nil, fmt.Errorf("text mind: %s: %w", resp.Status, err)
@@ -225,6 +229,10 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 	}
 	if len(r.Choices) == 0 {
 		return nil, fmt.Errorf("text mind: %s: no choice", resp.Status)
+	}
+	if r.Usage != nil && m.Log != nil { // the cost of a round (the SITL's metrics: tokens per turn)
+		ts, _ := body["tools"].([]map[string]any)
+		m.Log("mind_usage", map[string]any{"prompt_tokens": r.Usage.Prompt, "completion_tokens": r.Usage.Completion, "tools": len(ts)})
 	}
 	msg := r.Choices[0].Message
 	out := map[string]any{"role": "assistant", "content": msg["content"]}
