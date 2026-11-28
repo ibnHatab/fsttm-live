@@ -57,7 +57,8 @@ var recentKinds = map[string]bool{"tool": true, "persona": true, "presence": tru
 
 // sticky are the event kinds whose last one a page loading now needs (Nina's persona).
 var sticky = map[string]bool{"persona": true, "surprises": true, "settings": true,
-	"whatsapp": true} // nina-live's WhatsApp: the shown groups' recent messages (her card)
+	"whatsapp": true, // nina-live's WhatsApp: the shown groups' recent messages (her card)
+	"view":     true} // nina-live's context lines (the weather, the agenda, the timers…): her screens' domain cards
 
 // cors lets the allowed origins' pages call the API (a preflight answered here).
 func (w *Web) cors(next http.Handler) http.Handler {
