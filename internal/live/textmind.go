@@ -20,18 +20,18 @@ import (
 // many scenarios; DeepSeek Flash through OpenRouter instead). It keeps the conversation itself (the Live API
 // keeps it server side) and the silent context lines ahead of each turn, as Voice does.
 type TextMind struct {
-	URL     string // the chat completions endpoint (https://openrouter.ai/api/v1/chat/completions)
-	Model   string
+	URL   string // the chat completions endpoint (https://openrouter.ai/api/v1/chat/completions)
+	Model string
 	// Fallbacks: the models tried in order, for that call, when the one before is busy or out of quota
 	// (HTTP 429, 5xx: Gemini's "high demand", a free tier's rate): google:gemini-3.8-flash,gemini-3.7-flash
 	// (2026-11-28, the user: the acceptance on Gemini Flash with fallbacks on other Gemini models)
 	Fallbacks []string
-	KeyFile string // the key's file: a bare key, or KEY=… lines (OPENROUTER_API_KEY)
-	System  string
-	Tools   []*genai.Tool
-	Funcs   map[string]ToolFunc
-	Out     chan<- MindEvent
-	Log     func(string, map[string]any)
+	KeyFile   string // the key's file: a bare key, or KEY=… lines (OPENROUTER_API_KEY)
+	System    string
+	Tools     []*genai.Tool
+	Funcs     map[string]ToolFunc
+	Out       chan<- MindEvent
+	Log       func(string, map[string]any)
 
 	mu        sync.Mutex
 	key       string
