@@ -118,12 +118,8 @@ func New(ctx context.Context, cfg *config.Config, log *evlog.Log, tools Tools) (
 	n := &Dialogue{Cfg: cfg, Ev: log, prefs: cfg.Prefs, SavePrefs: cfg.SavePrefs}
 	var voice *live.Voice
 	var text *live.TextMind
-	if m, ok := strings.CutPrefix(cfg.Models.Mind, "openrouter:"); ok { // a mind without a voice (headless: the SITL)
-		key := cfg.Models.MindKey
-		if key == "" {
-			key = "~/.config/nina/openrouter.env"
-		}
-		text = &live.TextMind{URL: "https://openrouter.ai/api/v1/chat/completions", Model: m, KeyFile: cfg.Expand(key),
+	if url, key, models, ok := textMind(cfg); ok { // a mind without a voice (headless: the SITL)
+		text = &live.TextMind{URL: url, Model: models[0], Fallbacks: models[1:], KeyFile: cfg.Expand(key),
 			System: string(sys), Tools: tools.Decls, Funcs: tools.Funcs, Log: log.Ev}
 		n.Mind = text
 	} else {
@@ -701,3 +697,30 @@ func (n *Dialogue) spotter(cfg *config.Config, ev func(string, map[string]any)) 
 // StartPlugins starts the plugins the config enables (the web panel, the buttons), on this
 // dialogue as their host.
 func (n *Dialogue) StartPlugins(ctx context.Context) error { return plugin.Start(ctx, n.Cfg, n) }
+
+// textMind: a mind without a voice, models.mind as PROVIDER:MODEL[,FALLBACK…]: openrouter (its key
+// default ~/.config/nina/openrouter.env) or google (Gemini's OpenAI-compatible endpoint, the AI Studio key:
+// models.mind_key, else the config's key). Anything else is a Live model.
+func textMind(cfg *config.Config) (url, key string, models []string, ok bool) {
+	p, m, found := strings.Cut(cfg.Models.Mind, ":")
+	if !found {
+		return "", "", nil, false
+	}
+	switch p {
+	case "openrouter":
+		url, key = "https://openrouter.ai/api/v1/chat/completions", "~/.config/nina/openrouter.env"
+	case "google":
+		url, key = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", cfg.Key
+	default:
+		return "", "", nil, false
+	}
+	if cfg.Models.MindKey != "" {
+		key = cfg.Models.MindKey
+	}
+	for _, x := range strings.Split(m, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			models = append(models, x)
+		}
+	}
+	return url, key, models, len(models) > 0
+}

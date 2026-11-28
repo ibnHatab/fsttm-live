@@ -22,6 +22,10 @@ import (
 type TextMind struct {
 	URL     string // the chat completions endpoint (https://openrouter.ai/api/v1/chat/completions)
 	Model   string
+	// Fallbacks: the models tried in order, for that call, when the one before is busy or out of quota
+	// (HTTP 429, 5xx: Gemini's "high demand", a free tier's rate): google:gemini-3.8-flash,gemini-3.7-flash
+	// (2026-11-28, the user: the acceptance on Gemini Flash with fallbacks on other Gemini models)
+	Fallbacks []string
 	KeyFile string // the key's file: a bare key, or KEY=… lines (OPENROUTER_API_KEY)
 	System  string
 	Tools   []*genai.Tool
@@ -191,8 +195,27 @@ func (m *TextMind) run(ctx context.Context, id int) {
 	}
 }
 
+// chat asks the model, then each fallback while the one before is busy (429, 5xx) or unreachable.
 func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]any, error) {
-	body := map[string]any{"model": m.Model, "messages": msgs}
+	var err error
+	for i, model := range append([]string{m.Model}, m.Fallbacks...) {
+		var out map[string]any
+		var busy bool
+		if out, busy, err = m.chatWith(ctx, model, msgs); err == nil || !busy || ctx.Err() != nil {
+			return out, err
+		}
+		if m.Log != nil && i < len(m.Fallbacks) {
+			m.Log("mind_fallback", map[string]any{"model": model, "next": m.Fallbacks[i], "err": err.Error()})
+		}
+	}
+	return nil, err
+}
+
+// busyStatus: the model is busy or out of its quota for now, not wrong: the next one may answer.
+func busyStatus(code int) bool { return code == http.StatusTooManyRequests || code >= 500 }
+
+func (m *TextMind) chatWith(ctx context.Context, model string, msgs []map[string]any) (map[string]any, bool, error) {
+	body := map[string]any{"model": model, "messages": msgs}
 	if ts := m.tools(); len(ts) > 0 {
 		body["tools"] = ts
 	}
@@ -206,7 +229,7 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 	m.mu.Unlock()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, true, err // unreachable: the next model may be elsewhere
 	}
 	defer resp.Body.Close()
 	var r struct {
@@ -222,22 +245,22 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return nil, fmt.Errorf("text mind: %s: %w", resp.Status, err)
+		return nil, busyStatus(resp.StatusCode), fmt.Errorf("text mind: %s: %s: %w", model, resp.Status, err)
 	}
 	if r.Error != nil {
-		return nil, fmt.Errorf("text mind: %s", r.Error.Message)
+		return nil, busyStatus(resp.StatusCode), fmt.Errorf("text mind: %s: %s", model, r.Error.Message)
 	}
 	if len(r.Choices) == 0 {
-		return nil, fmt.Errorf("text mind: %s: no choice", resp.Status)
+		return nil, busyStatus(resp.StatusCode), fmt.Errorf("text mind: %s: %s: no choice", model, resp.Status)
 	}
 	if r.Usage != nil && m.Log != nil { // the cost of a round (the SITL's metrics: tokens per turn)
 		ts, _ := body["tools"].([]map[string]any)
-		m.Log("mind_usage", map[string]any{"prompt_tokens": r.Usage.Prompt, "completion_tokens": r.Usage.Completion, "tools": len(ts)})
+		m.Log("mind_usage", map[string]any{"prompt_tokens": r.Usage.Prompt, "completion_tokens": r.Usage.Completion, "tools": len(ts), "model": model})
 	}
 	msg := r.Choices[0].Message
 	out := map[string]any{"role": "assistant", "content": msg["content"]}
 	if tc, ok := msg["tool_calls"]; ok && tc != nil {
 		out["tool_calls"] = tc
 	}
-	return out, nil
+	return out, false, nil
 }

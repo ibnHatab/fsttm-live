@@ -26,7 +26,7 @@ type Config struct {
 	Charter string `yaml:"charter"` // the voice session's system instruction file
 	Models  struct {
 		Ears string `yaml:"ears"`
-		Mind string `yaml:"mind"` // a Live model, or openrouter:MODEL (a text mind: no voice, the SITL)
+		Mind string `yaml:"mind"` // a Live model, or a text mind (no voice, the SITL): openrouter:MODEL, google:MODEL[,FALLBACK…]
 		// MindKey: the text mind's key file (openrouter: KEY or OPENROUTER_API_KEY=…; default ~/.config/nina/openrouter.env)
 		MindKey string   `yaml:"mind_key"`
 		Vocab   []string `yaml:"vocab"` // the ears' customVocabulary
