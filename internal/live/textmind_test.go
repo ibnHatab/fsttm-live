@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The model busy (429, Gemini's "high demand"): the turn goes to the next model, and the answer is said.
@@ -28,6 +29,12 @@ func TestTheTextMindFallsBackWhenItsModelIsBusy(t *testing.T) {
 		case "busy":
 			w.WriteHeader(http.StatusTooManyRequests) // Gemini's own shape: a list, not an object
 			_, _ = w.Write([]byte(`[{"error":{"code":429,"message":"RESOURCE_EXHAUSTED"}}]`))
+		case "hangs":
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
 		case "wrong":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"message":"bad request"}}`))
@@ -48,6 +55,12 @@ func TestTheTextMindFallsBackWhenItsModelIsBusy(t *testing.T) {
 	}
 	if len(asked) != 2 || asked[0] != "busy" || asked[1] != "ok" || logged[len(logged)-1] != "mind_fallback" {
 		t.Fatalf("asked %v, logged %v", asked, logged)
+	}
+	asked = nil // a model that hangs is left for the next one, while there is a next one
+	TryWait = 100 * time.Millisecond
+	m.Model = "hangs"
+	if out, err := m.chat(context.Background(), []map[string]any{{"role": "user", "content": "hi"}}); err != nil || out["content"] != "hello from ok" {
+		t.Fatalf("hangs → next: %v %v (asked %v)", out, err, asked)
 	}
 	asked = nil
 	m.Model = "wrong"

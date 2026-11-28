@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -201,7 +202,11 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 	for i, model := range append([]string{m.Model}, m.Fallbacks...) {
 		var out map[string]any
 		var busy bool
-		if out, busy, err = m.chatWith(ctx, model, msgs); err == nil || !busy || ctx.Err() != nil {
+		wait := 90 * time.Second // the last model: as long as it takes
+		if i < len(m.Fallbacks) {
+			wait = TryWait // a next one is there: a model that hangs (Gemini at high demand) must not eat her turn
+		}
+		if out, busy, err = m.chatWith(ctx, model, msgs, wait); err == nil || !busy || ctx.Err() != nil {
 			return out, err
 		}
 		if m.Log != nil && i < len(m.Fallbacks) {
@@ -211,16 +216,19 @@ func (m *TextMind) chat(ctx context.Context, msgs []map[string]any) (map[string]
 	return nil, err
 }
 
+// TryWait: how long a model is given while a fallback is behind it (her turn is ~10 s; Flash answers in 1-3).
+var TryWait = 6 * time.Second
+
 // busyStatus: the model is busy or out of its quota for now, not wrong: the next one may answer.
 func busyStatus(code int) bool { return code == http.StatusTooManyRequests || code >= 500 }
 
-func (m *TextMind) chatWith(ctx context.Context, model string, msgs []map[string]any) (map[string]any, bool, error) {
+func (m *TextMind) chatWith(ctx context.Context, model string, msgs []map[string]any, wait time.Duration) (map[string]any, bool, error) {
 	body := map[string]any{"model": model, "messages": msgs}
 	if ts := m.tools(); len(ts) > 0 {
 		body["tools"] = ts
 	}
 	b, _ := json.Marshal(body)
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "POST", m.URL, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -244,7 +252,16 @@ func (m *TextMind) chatWith(ctx context.Context, model string, msgs []map[string
 			Completion int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	raw, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(raw, &r); err != nil {
+		var list []struct { // Gemini's errors come as a list: [{"error": {"message": …}}]
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &list) == nil && len(list) > 0 && list[0].Error.Message != "" {
+			return nil, busyStatus(resp.StatusCode), fmt.Errorf("text mind: %s: %s: %s", model, resp.Status, list[0].Error.Message)
+		}
 		return nil, busyStatus(resp.StatusCode), fmt.Errorf("text mind: %s: %s: %w", model, resp.Status, err)
 	}
 	if r.Error != nil {
